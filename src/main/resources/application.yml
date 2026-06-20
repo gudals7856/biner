@@ -25,8 +25,8 @@ spring:
 
 logging:
   level:
-    com.biner.market.websocket: INFO 
-    com.biner.strategy.engine: INFO
+    com.biner.market.websocket: DEBUG
+    com.biner.strategy.engine: DEBUG
 
 resilience4j:
   circuitbreaker:

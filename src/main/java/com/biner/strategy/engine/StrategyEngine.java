@@ -60,6 +60,10 @@ public class StrategyEngine {
 
         series.addBar(Ta4jConverter.convert(event));
 
+        // [진단용] 현재 몇 개의 캔들이 쌓였는지, 그리고 몇 개가 더 필요한지 INFO 레벨로 강제 출력합니다.
+        log.info("BarSeries for {} contains {} bars. {} more bars needed to start analysis.",
+                symbol, series.getBarCount(), Math.max(0, 50 - series.getBarCount()));
+
         if (series.getBarCount() < 50) {
             return;
         }
@@ -106,6 +110,12 @@ public class StrategyEngine {
         double upperBand = bbUpper.getValue(lastIndex).doubleValue();
         boolean touchesUpperBand = currentClose >= upperBand * 0.99 || currentHigh >= upperBand * 0.99;
 
+        // [수정] 매매 신호가 발생하든 안하든, 무포지션 상태에서는 항상 현재 지표 상태를 DEBUG 레벨로 로깅합니다.
+        if (log.isDebugEnabled()) {
+            log.debug("Indicators [{}]: Uptrend={}, MACD+={}, RSI={}, BB_Touch={}", 
+                      symbol, isUptrend, macdPositive, String.format("%.2f", rsiValue), touchesLowerBand);
+        }
+
         if (isUptrend && macdPositive && rsiValue < 45 && touchesLowerBand) {
             TradeSignal signal = new TradeSignal(
                     symbol,
@@ -114,7 +124,7 @@ public class StrategyEngine {
                     BASE_ENTRY_PERCENT,
                     "New LONG: Uptrend, MACD+, RSI<45, BB Lower Touch"
             );
-            log.info("Emitting new entry signal: {}", signal);
+            log.info("🚀 Emitting LONG signal: {}", signal);
             eventPublisher.publishEvent(signal);
         }
         else if (!isUptrend && !macdPositive && rsiValue > 55 && touchesUpperBand) {
@@ -125,7 +135,7 @@ public class StrategyEngine {
                     BASE_ENTRY_PERCENT,
                     "New SHORT: Downtrend, MACD-, RSI>55, BB Upper Touch"
             );
-            log.info("Emitting new entry signal: {}", signal);
+            log.info("🚀 Emitting SHORT signal: {}", signal);
             eventPublisher.publishEvent(signal);
         }
     }
@@ -163,7 +173,7 @@ public class StrategyEngine {
                     BASE_ENTRY_PERCENT,
                     "DCA Triggered: Price dropped below " + DCA_DROP_PERCENT.multiply(new BigDecimal("100")) + "%"
             );
-            log.info("Emitting DCA (Averaging Down) signal. Current DCA Count: {}/{}", position.getDcaCount(), MAX_DCA_COUNT);
+            log.info("💧 Emitting DCA signal. Current DCA Count: {}/{}", position.getDcaCount(), MAX_DCA_COUNT);
             eventPublisher.publishEvent(dcaSignal);
         }
     }
