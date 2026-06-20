@@ -43,7 +43,6 @@ public class BinanceFuturesClient {
                 symbol, side, type, quantity.toPlainString(), timestamp);
                 
         if (price != null) {
-            // STOP_MARKET은 stopPrice 파라미터를 사용해야 합니다.
             if ("STOP_MARKET".equals(type) || "TAKE_PROFIT_MARKET".equals(type)) {
                 queryString += "&stopPrice=" + price.toPlainString();
             } else {
@@ -56,23 +55,16 @@ public class BinanceFuturesClient {
 
         log.info("Sending order to Binance: URL={}?{}", baseUrl + "/fapi/v1/order", queryString);
 
-        try {
-            return webClient.post()
-                    .uri(baseUrl + "/fapi/v1/order?" + queryString)
-                    .header("X-MBX-APIKEY", apiKey)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .block();
-        } catch (Exception e) {
-            log.error("Failed to place order via WebClient", e);
-            throw e;
-        }
+        // WebClient 요청 시 예외를 던지지 않고 밖으로 내보내야 Resilience4j가 정상적으로 에러를 잡아서 Fallback을 수행합니다.
+        return webClient.post()
+                .uri(baseUrl + "/fapi/v1/order?" + queryString)
+                .header("X-MBX-APIKEY", apiKey)
+                .contentType(MediaType.APPLICATION_JSON)
+                .retrieve()
+                .bodyToMono(String.class)
+                .block();
     }
 
-    /**
-     * [TODO 완료] 미체결 주문(스탑로스, 익절) 일괄 취소 API 호출 로직 추가
-     */
     @RateLimiter(name = "binanceApi")
     @CircuitBreaker(name = "binanceApi", fallbackMethod = "cancelFallback")
     @Retry(name = "binanceApi")
@@ -84,25 +76,23 @@ public class BinanceFuturesClient {
 
         log.info("Canceling all open orders for symbol: {}", symbol);
 
-        try {
-            return webClient.delete()
-                    .uri(baseUrl + "/fapi/v1/allOpenOrders?" + queryString)
-                    .header("X-MBX-APIKEY", apiKey)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .block();
-        } catch (Exception e) {
-            log.error("Failed to cancel open orders via WebClient", e);
-            throw e;
-        }
+        return webClient.delete()
+                .uri(baseUrl + "/fapi/v1/allOpenOrders?" + queryString)
+                .header("X-MBX-APIKEY", apiKey)
+                .retrieve()
+                .bodyToMono(String.class)
+                .block();
     }
 
-    private String orderFallback(String symbol, String side, String type, BigDecimal quantity, BigDecimal price, Throwable t) {
+    // Spring AOP proxy 기반의 Resilience4j fallback 메서드는 
+    // 반드시 원본 메서드와 "접근 제어자", "파라미터(마지막에 Throwable 추가)", "반환 타입"이 완벽하게 일치해야 합니다.
+    // 기존에 private으로 되어 있어서 Resilience4j(AOP)가 외부에서 이 메서드를 찾지 못해 미사용(Unused) 처리되었던 것입니다.
+    public String orderFallback(String symbol, String side, String type, BigDecimal quantity, BigDecimal price, Throwable t) {
         log.error("Order Execution Fallback Triggered. Symbol={}, Side={}. Reason: {}", symbol, side, t.getMessage());
         return "FALLBACK_TRIGGERED";
     }
 
-    private String cancelFallback(String symbol, Throwable t) {
+    public String cancelFallback(String symbol, Throwable t) {
         log.error("Cancel Orders Fallback Triggered. Symbol={}. Reason: {}", symbol, t.getMessage());
         return "FALLBACK_TRIGGERED";
     }
