@@ -1,0 +1,69 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.5.1'
+    id 'io.spring.dependency-management' version '1.1.4'
+}
+
+group = 'com.biner'
+version = '0.0.1-SNAPSHOT'
+
+java {
+    sourceCompatibility = '21'
+}
+
+configurations {
+    compileOnly {
+        extendsFrom annotationProcessor
+    }
+}
+
+repositories {
+    mavenCentral()
+    maven {
+        url = uri("https://company/com/maven2")
+    }
+    mavenLocal()
+    flatDir {
+        dirs "libs"
+    }
+}
+dependencies {
+    // 1. Spring Boot Core & Web (WebFlux 포함)
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-webflux'
+    // WebSocket
+    implementation 'org.springframework.boot:spring-boot-starter-websocket'
+
+    // Mac OS용 Netty DNS Resolver (Netty 경고 해결)
+    implementation 'io.netty:netty-resolver-dns-native-macos:4.1.107.Final:osx-aarch_64'
+
+    // 2. Database & ORM (PostgreSQL + TimescaleDB 용)
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    runtimeOnly 'org.postgresql:postgresql'
+
+    // 3. In-Memory Store (Redis)
+    implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+
+    // 4. Quant & Technical Analysis Library (지표 계산)
+    implementation 'org.ta4j:ta4j-core:0.15'
+
+    // 5. Fault Tolerance (안전장치 - Rate Limit, Circuit Breaker)
+    implementation 'org.springframework.boot:spring-boot-starter-aop'
+    implementation 'io.github.resilience4j:resilience4j-spring-boot3:2.2.0'
+
+    // 6. Utilities
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+    implementation 'com.fasterxml.jackson.core:jackson-databind'
+
+    // 7. Test
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'io.projectreactor:reactor-test'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+    
+    // Java 21 + Mockito(Spring Boot Test) 사용 시 발생하는 self-attach 경고 제거
+    jvmArgs("-XX:+EnableDynamicAgentLoading")
+}

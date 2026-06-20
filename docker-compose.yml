@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  # 1. 시계열 데이터 및 포지션 상태 저장용 DB
+  timescaledb:
+    image: timescale/timescaledb:latest-pg14
+    container_name: biner-timescaledb
+    environment:
+      POSTGRES_USER: biner
+      POSTGRES_PASSWORD: local_password
+      POSTGRES_DB: trading_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - biner-network
+
+  # 2. API 호출 빈도 제어 및 임시 상태 관리용 인메모리 DB
+  redis:
+    image: redis:alpine
+    container_name: biner-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    networks:
+      - biner-network
+
+volumes:
+  timescale_data:
+
+networks:
+  biner-network:
+    driver: bridge
