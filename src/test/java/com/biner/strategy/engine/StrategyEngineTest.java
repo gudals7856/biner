@@ -75,7 +75,8 @@ class StrategyEngineTest {
                     high,      
                     low, 
                     close,                                
-                    new BigDecimal("100.5")               
+                    new BigDecimal("100.5"),
+                    "5m"
             );
             
             strategyEngine.onCandleClosed(mockEvent);
