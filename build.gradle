@@ -36,6 +36,8 @@ dependencies {
 
     // Flyway (DB 스키마 버전 관리)
     implementation 'org.flywaydb:flyway-core'
+    // [수정] Flyway가 PostgreSQL을 지원하도록 의존성 추가
+    implementation 'org.flywaydb:flyway-database-postgresql'
 
     // Mac OS용 Netty DNS Resolver (Netty 경고 해결)
     implementation 'io.netty:netty-resolver-dns-native-macos:4.1.107.Final:osx-aarch_64'

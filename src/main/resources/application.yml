@@ -7,10 +7,16 @@ spring:
     password: local_password
   jpa:
     hibernate:
-      ddl-auto: update
+      # [중요] Flyway가 DB 스키마를 전적으로 관리하도록, Hibernate의 자동 DDL 생성 기능을 끕니다.
+      ddl-auto: none
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
+  
+  # Flyway 설정 추가
+  flyway:
+    enabled: true
+    baseline-on-migrate: true # DB에 이미 테이블이 있어도 Flyway가 관리하도록 허용
 
   data:
     redis:
