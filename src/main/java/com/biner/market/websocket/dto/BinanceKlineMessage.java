@@ -6,26 +6,12 @@ import java.math.BigDecimal;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record BinanceKlineMessage(
-    // 어떤 형태로 들어오든 대응할 수 있도록 두 가지 필드를 모두 열어둡니다.
-    
-    // 1. 단일 스트림 (/ws/btcusdt@kline_1m) 형태일 때 사용
+    // [수정] 현물 스트림은 wrapper 없이 바로 내려오므로, stream/data 필드를 제거하고 원래 구조로 복구합니다.
     @JsonProperty("e") String eventType,
     @JsonProperty("E") Long eventTime,
     @JsonProperty("s") String symbol,
-    @JsonProperty("k") KlineData kline,
-    
-    // 2. 복합 스트림 (/stream?streams=...) 형태일 때 사용
-    @JsonProperty("stream") String stream,
-    @JsonProperty("data") KlineEventData data
+    @JsonProperty("k") KlineData kline
 ) {
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    public record KlineEventData(
-        @JsonProperty("e") String eventType,
-        @JsonProperty("E") long eventTime,
-        @JsonProperty("s") String symbol,
-        @JsonProperty("k") KlineData kline
-    ) {}
-
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record KlineData(
         @JsonProperty("t") long startTime,

@@ -14,9 +14,9 @@ public class MarketWebSocketConfig {
 
     private static final Logger log = LoggerFactory.getLogger(MarketWebSocketConfig.class);
     
-    // 현물(Spot)이 성공한 것을 확인했으므로, 다시 선물(Futures)의 단일 스트림 URL로 복구합니다.
-    // 이번에는 1분봉(1m)으로 선물 데이터를 받아보겠습니다.
-    private static final String BINANCE_FUTURES_WS_URL = "wss://fstream.binance.com/ws/btcusdt@kline_1m";
+    // [수정] 선물(fstream) 서버 대신, 접속이 확실하게 보장되는 현물(Spot) 서버 URL로 변경합니다.
+    // 빠른 테스트를 위해 1분봉으로 설정합니다.
+    private static final String BINANCE_SPOT_WS_URL = "wss://stream.binance.com:9443/ws/btcusdt@kline_1m";
 
     private final BinanceKlineWebSocketHandler klineWebSocketHandler;
 
@@ -27,14 +27,14 @@ public class MarketWebSocketConfig {
     @EventListener(ApplicationReadyEvent.class)
     public void connectToBinanceWebSocket() {
         try {
-            log.info("Attempting to connect to Binance WebSocket at {}...", BINANCE_FUTURES_WS_URL);
+            log.info("Attempting to connect to Binance WebSocket at {}...", BINANCE_SPOT_WS_URL);
             
             StandardWebSocketClient client = new StandardWebSocketClient();
             
             WebSocketConnectionManager connectionManager = new WebSocketConnectionManager(
                     client, 
                     klineWebSocketHandler, 
-                    BINANCE_FUTURES_WS_URL
+                    BINANCE_SPOT_WS_URL
             );
             
             connectionManager.setAutoStartup(true);
