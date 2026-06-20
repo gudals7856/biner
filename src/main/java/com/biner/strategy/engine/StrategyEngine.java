@@ -40,7 +40,7 @@ public class StrategyEngine {
     
     private static final BigDecimal BASE_ENTRY_PERCENT = new BigDecimal("0.05");
     private static final BigDecimal DCA_DROP_PERCENT = new BigDecimal("0.015");
-    private static final int MAX_DCA_COUNT = 4; // 최대 물타기 횟수 (TODO 완료로 인해 이제 작동함)
+    private static final int MAX_DCA_COUNT = 4;
 
     public StrategyEngine(ApplicationEventPublisher eventPublisher, PositionRepository positionRepository) {
         this.eventPublisher = eventPublisher;
@@ -68,7 +68,7 @@ public class StrategyEngine {
     }
 
     private void analyzeAndEmitSignal(String symbol, BarSeries series, CandleClosedEvent currentCandle) {
-        Optional<Position> activePositionOpt = positionRepository.findBySymbolAndSideNot(symbol, Position.PositionSide.NONE);
+        Optional<Position> activePositionOpt = positionRepository.findBySymbolAndStatus(symbol, Position.PositionStatus.OPEN);
         
         if (activePositionOpt.isPresent()) {
             handleExistingPosition(activePositionOpt.get(), currentCandle);
@@ -131,9 +131,8 @@ public class StrategyEngine {
     }
 
     private void handleExistingPosition(Position position, CandleClosedEvent currentCandle) {
-        // 최대 물타기 횟수를 초과했는지 DB 컬럼으로 정확히 판단합니다.
         if (position.getDcaCount() >= MAX_DCA_COUNT) {
-            return; // 총알이 없으므로 물타기 포기
+            return;
         }
 
         BigDecimal currentPrice = currentCandle.close();

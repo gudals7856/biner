@@ -8,5 +8,6 @@ import java.util.Optional;
 
 @Repository
 public interface PositionRepository extends JpaRepository<Position, Long> {
-    Optional<Position> findBySymbolAndSideNot(String symbol, Position.PositionSide side);
+    
+    Optional<Position> findBySymbolAndStatus(String symbol, Position.PositionStatus status);
 }

@@ -26,6 +26,10 @@ public class Position {
     @Column(nullable = false)
     private PositionSide side;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private PositionStatus status;
+
     @Column(name = "entry_price", nullable = false, precision = 20, scale = 8)
     private BigDecimal entryPrice;
 
@@ -35,25 +39,44 @@ public class Position {
     @Column(nullable = false)
     private int leverage;
 
-    // DCA(분할 매수) 횟수를 정확히 트래킹하기 위한 필드 추가
     @Column(name = "dca_count", nullable = false)
     private int dcaCount = 0;
 
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
+    @Column(name = "closed_at")
+    private Instant closedAt;
+
     public enum PositionSide {
         LONG, SHORT, NONE
+    }
+
+    public enum PositionStatus {
+        OPEN,
+        CLOSED
     }
 
     @Builder
     public Position(String symbol, PositionSide side, BigDecimal entryPrice, BigDecimal amount, int leverage, int dcaCount) {
         this.symbol = symbol;
         this.side = side;
+        this.status = PositionStatus.OPEN;
         this.entryPrice = entryPrice;
         this.amount = amount;
         this.leverage = leverage;
-        this.dcaCount = dcaCount; // 초기화 시 주입
+        this.dcaCount = dcaCount;
         this.createdAt = Instant.now();
+    }
+
+    public void close() {
+        this.status = PositionStatus.CLOSED;
+        this.closedAt = Instant.now();
+    }
+    
+    public void updateDca(BigDecimal newAvgPrice, BigDecimal newTotalAmount, int newDcaCount) {
+        this.entryPrice = newAvgPrice;
+        this.amount = newTotalAmount;
+        this.dcaCount = newDcaCount;
     }
 }
