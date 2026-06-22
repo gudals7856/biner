@@ -226,6 +226,6 @@ public class StrategyEngine {
     private boolean touchesLowerBand(BarSeries series, CandleClosedEvent currentCandle) {
         BollingerTouchStrategy bollingerStrategy = bollingerStrategyFactory.getStrategy(currentCandle.interval());
 
-      return bollingerStrategy.isTouched(series, currentCandle);
+        return bollingerStrategy.isTouched(series, currentCandle);
     }
 }

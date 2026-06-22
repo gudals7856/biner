@@ -52,7 +52,8 @@ public class BinanceKlineWebSocketHandler extends TextWebSocketHandler {
             if (klineMessage != null && klineMessage.kline() != null) {
                 BinanceKlineMessage.KlineData klineData = klineMessage.kline();
                 
-                // 현재 구독 중인 캔들이 '1분봉'이고, 해당 캔들이 '마감'(isFinal=true)되었을 때만 처리합니다.
+                // 현재 구독 중인 캔들이 args 의 시간봉이고, 해당 캔들이 '마감'(isFinal=true)되었을 때만 처리합니다.
+                // TODO : main문 파라미터에 시간봉 종류 추가
                 if ("1m".equals(klineData.interval()) && klineData.isFinal()) {
                     // 캔들 마감 데이터를 담은 CandleClosedEvent 객체를 생성합니다.
                     CandleClosedEvent event = new CandleClosedEvent(
@@ -67,7 +68,7 @@ public class BinanceKlineWebSocketHandler extends TextWebSocketHandler {
                             klineData.interval()
                     );
                     
-                    log.info("🎯 1분봉 캔들 마감 이벤트 발행. 심볼: {}, 종가: {}", event.symbol(), event.close());
+                    log.info("🎯캔들 마감 이벤트 발행. 심볼: {}, 종가: {}", event.symbol(), event.close());
                     
                     // 생성된 이벤트를 애플리케이션 전체에 발행(publish)합니다.
                     // 이 이벤트를 구독(listen)하는 다른 컴포넌트(예: 전략 서비스)가 후속 처리를 진행합니다.
