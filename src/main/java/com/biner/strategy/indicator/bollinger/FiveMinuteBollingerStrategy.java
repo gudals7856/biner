@@ -15,7 +15,7 @@ public class FiveMinuteBollingerStrategy implements BollingerTouchStrategy {
 
   private static final int BAR_COUNT = 20;
   private static final double DEVIATION_MULTIPLIER = 2.0;
-  private static final double BUFFER_PERCENT = 0.01; // 1% 버퍼
+  private static final double BUFFER_PERCENT = 0.005; // 1% 버퍼
 
   @Override
   public boolean isTouched(BarSeries series, CandleClosedEvent currentCandle) {
@@ -31,7 +31,7 @@ public class FiveMinuteBollingerStrategy implements BollingerTouchStrategy {
     double currentClose = currentCandle.close().doubleValue();
     double currentLow = currentCandle.low().doubleValue();
 
-    // 5분봉은 1% 버퍼를 더한 값과 비교
+    // 5분봉은 0.5% 버퍼를 더한 값과 비교
     return currentClose <= (lowerBandValue + buffer) || currentLow <= (lowerBandValue + buffer);
   }
 

@@ -29,7 +29,7 @@ public class OneMinuteBollingerStrategy implements BollingerTouchStrategy {
     double currentClose = currentCandle.close().doubleValue();
     double currentLow = currentCandle.low().doubleValue();
 
-    // 1분봉은 별도의 % 버퍼 없이 밴드 하단 이하인지 빡빡하게 검사
+    // 1분봉은 별도의 % 버퍼 없이 1.9 승수 밴드 하단 이하인지 검사
     return currentClose <= lowerBandValue || currentLow <= lowerBandValue;
   }
 
