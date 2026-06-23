@@ -3,6 +3,7 @@ package com.biner.backtest.engine;
 import com.biner.market.domain.Candle;
 import com.biner.market.event.CandleClosedEvent;
 import com.biner.market.repository.CandleRepository;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
@@ -16,18 +17,12 @@ import java.util.List;
  */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class ReplayEngine {
 
-    // 과거 캔들 데이터를 DB에서 조회하기 위한 리포지토리
     private final CandleRepository candleRepository;
-    
-    // 이벤트를 발생시켜 애플리케이션 내의 다른 컴포넌트(예: 전략 서비스)로 전달하기 위한 퍼블리셔
     private final ApplicationEventPublisher eventPublisher;
-
-    public ReplayEngine(CandleRepository candleRepository, ApplicationEventPublisher eventPublisher) {
-        this.candleRepository = candleRepository;
-        this.eventPublisher = eventPublisher;
-    }
+    private final MockExecutionService mockExecutionService;
 
     /**
      * 지정된 기간의 과거 데이터를 사용하여 백테스트를 실행합니다.
@@ -37,17 +32,20 @@ public class ReplayEngine {
      * @param end    백테스트 종료 시간
      */
     public void runBacktest(String symbol, Instant start, Instant end) {
-        log.info("{} 코인의 백테스트 시작. 기간: {} ~ {}", symbol, start, end);
-        
-        // 지정된 기간 동안의 캔들 데이터를 시간 순서대로(오름차순) DB에서 모두 가져옵니다.
+        // 1. 백테스트 시작 전, 모의 체결 서비스를 초기화합니다.
+        mockExecutionService.reset();
+
+        String backtestSymbol = symbol + "_BACKTEST";
+        log.info("{} 코인의 백테스트 시작. 기간: {} ~ {}", backtestSymbol, start, end);
+
+        // 2. 지정된 기간 동안의 캔들 데이터를 시간 순서대로(오름차순) DB에서 모두 가져옵니다.
         List<Candle> historicalCandles = candleRepository.findBySymbolAndOpenTimeBetweenOrderByOpenTimeAsc(symbol, start, end);
         log.info("백테스트를 위해 {} 개의 캔들 데이터를 불러왔습니다.", historicalCandles.size());
 
-        // 불러온 캔들 데이터를 하나씩 순회합니다.
+        // 3. 불러온 캔들 데이터를 하나씩 순회하며 이벤트를 발행합니다.
         for (Candle candle : historicalCandles) {
-            // 마치 실시간으로 캔들이 마감된 것처럼 이벤트를 생성합니다.
             CandleClosedEvent event = new CandleClosedEvent(
-                candle.getSymbol(),
+                backtestSymbol, // 백테스트용 심볼을 사용
                 candle.getOpenTime(),
                 candle.getCloseTime(),
                 candle.getOpen(),
@@ -55,16 +53,16 @@ public class ReplayEngine {
                 candle.getLow(),
                 candle.getClose(),
                 candle.getVolume(),
-                "5m"
+                "1m" // 현재 1분봉 데이터 기준
             );
             
-            // 생성된 이벤트를 애플리케이션 내부에 발행합니다.
-            // 이렇게 하면 실시간 트레이딩 로직(Strategy) 코드를 수정하지 않고도, 
-            // 이 이벤트를 받아 마치 실시간처럼 전략을 테스트할 수 있습니다.
+            // 4. 이벤트를 발행하여 StrategyEngine과 MockExecutionService가 수신하도록 합니다.
             eventPublisher.publishEvent(event);
         }
         
-        log.info("{} 코인의 백테스트 리플레이(이벤트 발생)가 모두 완료되었습니다.", symbol);
-        // TODO: 이벤트 발생이 모두 끝난 후, 가상 거래 내역을 바탕으로 최종 수익률을 계산하고 리포트를 출력하는 로직 추가 필요
+        log.info("{} 코인의 백테스트 리플레이가 모두 완료되었습니다.", backtestSymbol);
+
+        // 5. 모든 리플레이가 끝난 후, 최종 결과 리포트를 출력합니다.
+        mockExecutionService.printReport();
     }
 }
