@@ -3,6 +3,8 @@ package com.biner.market.websocket;
 import com.biner.market.event.CandleClosedEvent;
 import com.biner.market.websocket.dto.BinanceKlineMessage;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.RequiredArgsConstructor;
+import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
@@ -19,18 +21,18 @@ import java.time.Instant;
  */
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class BinanceKlineWebSocketHandler extends TextWebSocketHandler {
 
     // 애플리케이션 이벤트를 발행하기 위한 퍼블리셔
     private final ApplicationEventPublisher eventPublisher;
-    
+
     // JSON 문자열을 Java 객체로 변환하기 위한 ObjectMapper
     private final ObjectMapper objectMapper;
 
-    public BinanceKlineWebSocketHandler(ApplicationEventPublisher eventPublisher, ObjectMapper objectMapper) {
-        this.eventPublisher = eventPublisher;
-        this.objectMapper = objectMapper;
-    }
+    // MarketWebSocketConfig에서 설정할 구독 시간봉(interval)
+    @Setter
+    private String klineInterval;
 
     /**
      * WebSocket 서버로부터 텍스트 메시지를 수신했을 때 호출되는 메서드입니다.
@@ -42,20 +44,19 @@ public class BinanceKlineWebSocketHandler extends TextWebSocketHandler {
         try {
             // 디버그 레벨이 활성화된 경우에만 수신된 원본 메시지를 로그로 남깁니다. (성능 저하 방지)
             if (log.isDebugEnabled()) {
-                log.debug("🔥 [LIVE DATA] {}", message.getPayload()); 
+                log.debug("🔥 [LIVE DATA] {}", message.getPayload());
             }
-            
+
             // 수신된 JSON 문자열을 BinanceKlineMessage DTO 객체로 변환(파싱)합니다.
             BinanceKlineMessage klineMessage = objectMapper.readValue(message.getPayload(), BinanceKlineMessage.class);
-            
+
             // 메시지와 내부 kline 데이터가 정상적으로 파싱되었는지 확인합니다.
             if (klineMessage != null && klineMessage.kline() != null) {
                 BinanceKlineMessage.KlineData klineData = klineMessage.kline();
-                
-                // 현재 구독 중인 캔들이 args 의 시간봉이고, 해당 캔들이 '마감'(isFinal=true)되었을 때만 처리합니다.
-                // TODO : main문 파라미터에 시간봉 종류 추가
-                if ("1m".equals(klineData.interval()) && klineData.isFinal()) {
-                    // 캔들 마감 데이터를 담은 CandleClosedEvent 객체를 생성합니다.
+
+                // 외부에서 주입받은 klineInterval 값과 비교합니다.
+                // 또한, 캔들이 마감(isFinal=true)되었을 때만 이벤트를 발행합니다.
+                if (klineInterval.equals(klineData.interval()) && klineData.isFinal()) {
                     CandleClosedEvent event = new CandleClosedEvent(
                             klineData.symbol(),
                             Instant.ofEpochMilli(klineData.startTime()), // 타임스탬프를 Instant 객체로 변환
@@ -67,11 +68,8 @@ public class BinanceKlineWebSocketHandler extends TextWebSocketHandler {
                             klineData.volume(),
                             klineData.interval()
                     );
-                    
-                    log.info("🎯캔들 마감 이벤트 발행. 심볼: {}, 종가: {}", event.symbol(), event.close());
-                    
-                    // 생성된 이벤트를 애플리케이션 전체에 발행(publish)합니다.
-                    // 이 이벤트를 구독(listen)하는 다른 컴포넌트(예: 전략 서비스)가 후속 처리를 진행합니다.
+
+                    log.info("🎯 {} 캔들 마감 이벤트 발행. 심볼: {}, 종가: {}", klineInterval, event.symbol(), event.close());
                     eventPublisher.publishEvent(event);
                 }
             }
