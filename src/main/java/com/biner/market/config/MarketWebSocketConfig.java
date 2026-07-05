@@ -8,15 +8,17 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
 import org.springframework.context.event.EventListener;
 import org.springframework.web.socket.client.WebSocketConnectionManager;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 
 /**
  * 바이낸스 실시간 시세(Kline/Candlestick) 데이터 수신을 위한 WebSocket 연결을 설정하는 클래스입니다.
- * Spring Boot 애플리케이션이 완전히 시작된 후에 WebSocket 연결을 시도합니다.
+ * 이 설정은 'backtest' 프로필이 활성화되지 않았을 때만 동작합니다.
  */
 @Configuration
+@Profile("!backtest") // 'backtest' 프로필이 아닐 때만 이 설정 파일을 활성화합니다.
 @RequiredArgsConstructor
 public class MarketWebSocketConfig {
 
@@ -52,7 +54,7 @@ public class MarketWebSocketConfig {
             String streamName = String.format("btcusdt@kline_%s", klineInterval);
             String webSocketUrl = String.format(BINANCE_WS_URL_TEMPLATE, streamName);
 
-            log.info("바이낸스 WebSocket 연결 시도... URL: {}", webSocketUrl);
+            log.info("실시간 모드: 바이낸스 WebSocket 연결을 시작합니다. URL: {}", webSocketUrl);
 
             StandardWebSocketClient client = new StandardWebSocketClient();
 

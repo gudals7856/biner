@@ -1,4 +1,6 @@
 spring:
+  profiles:
+    active: backtest # 'backtest' 프로필을 활성화합니다. 실시간 운영 시 이 라인을 주석 처리하거나 'live'로 변경하세요.
   application:
     name: biner
   datasource:
@@ -25,7 +27,8 @@ spring:
 
 logging:
   level:
-    com.biner.market.websocket: DEBUG
+    com.biner: INFO # 기본 로그 레벨을 INFO로 설정
+    com.biner.backtest: DEBUG # 백테스트 관련 로그는 상세히 보도록 DEBUG로 설정
     com.biner.strategy.engine: DEBUG
 
 resilience4j:
@@ -55,3 +58,9 @@ binance:
     url: https://testnet.binancefuture.com
     key: ${BINANCE_API_KEY:dummy_key_for_local_test}
     secret: ${BINANCE_API_SECRET:dummy_secret_for_local_test}
+
+# --- 백테스트 전용 설정 ---
+backtest:
+  symbol: "BTCUSDT"
+  start-time: "2023-01-01T00:00:00Z"
+  end-time: "2023-01-31T23:59:59Z"
