@@ -62,5 +62,6 @@ binance:
 # --- 백테스트 전용 설정 ---
 backtest:
   symbol: "BTCUSDT"
+  timeframe: "1m" # 백테스트할 시간봉
   start-time: "2023-01-01T00:00:00Z"
   end-time: "2023-01-31T23:59:59Z"

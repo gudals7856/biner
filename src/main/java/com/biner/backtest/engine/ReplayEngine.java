@@ -27,19 +27,20 @@ public class ReplayEngine {
     /**
      * 지정된 기간의 과거 데이터를 사용하여 백테스트를 실행합니다.
      *
-     * @param symbol 백테스트할 코인 심볼 (예: "BTCUSDT")
-     * @param start  백테스트 시작 시간
-     * @param end    백테스트 종료 시간
+     * @param symbol    백테스트할 코인 심볼 (예: "BTCUSDT")
+     * @param timeframe 백테스트할 시간봉 (예: "1m", "5m")
+     * @param start     백테스트 시작 시간
+     * @param end       백테스트 종료 시간
      */
-    public void runBacktest(String symbol, Instant start, Instant end) {
+    public void runBacktest(String symbol, String timeframe, Instant start, Instant end) {
         // 1. 백테스트 시작 전, 모의 체결 서비스를 초기화합니다.
         mockExecutionService.reset();
 
         String backtestSymbol = symbol + "_BACKTEST";
-        log.info("{} 코인의 백테스트 시작. 기간: {} ~ {}", backtestSymbol, start, end);
+        log.info("{} ({}) 코인의 백테스트 시작. 기간: {} ~ {}", backtestSymbol, timeframe, start, end);
 
-        // 2. 지정된 기간 동안의 캔들 데이터를 시간 순서대로(오름차순) DB에서 모두 가져옵니다.
-        List<Candle> historicalCandles = candleRepository.findBySymbolAndOpenTimeBetweenOrderByOpenTimeAsc(symbol, start, end);
+        // 2. 지정된 기간 동안의 캔들 데이터를 DB에서 가져옵니다.
+        List<Candle> historicalCandles = candleRepository.findBySymbolAndTimeframeAndOpenTimeBetween(symbol, timeframe, start, end);
         log.info("백테스트를 위해 {} 개의 캔들 데이터를 불러왔습니다.", historicalCandles.size());
 
         // 3. 불러온 캔들 데이터를 하나씩 순회하며 이벤트를 발행합니다.
@@ -53,7 +54,7 @@ public class ReplayEngine {
                 candle.getLow(),
                 candle.getClose(),
                 candle.getVolume(),
-                "1m" // 현재 1분봉 데이터 기준
+                candle.getTimeframe() // Candle 엔티티에서 timeframe 정보를 가져옴
             );
             
             // 4. 이벤트를 발행하여 StrategyEngine과 MockExecutionService가 수신하도록 합니다.

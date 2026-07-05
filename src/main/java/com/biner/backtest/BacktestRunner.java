@@ -26,6 +26,9 @@ public class BacktestRunner implements CommandLineRunner {
     @Value("${backtest.symbol}")
     private String symbol;
 
+    @Value("${backtest.timeframe}")
+    private String timeframe;
+
     @Value("${backtest.start-time}")
     private String startTime;
 
@@ -36,7 +39,7 @@ public class BacktestRunner implements CommandLineRunner {
     public void run(String... args) throws Exception {
         log.info("==================================================");
         log.info("백테스트 모드로 애플리케이션을 시작합니다.");
-        log.info("심볼: {}, 시작: {}, 종료: {}", symbol, startTime, endTime);
+        log.info("심볼: {}, 시간봉: {}, 시작: {}, 종료: {}", symbol, timeframe, startTime, endTime);
         log.info("==================================================");
 
         // 설정 파일의 시간 문자열을 Instant 객체로 변환합니다.
@@ -44,7 +47,7 @@ public class BacktestRunner implements CommandLineRunner {
         Instant end = Instant.parse(endTime);
 
         // ReplayEngine을 사용하여 백테스트를 실행합니다.
-        replayEngine.runBacktest(symbol, start, end);
+        replayEngine.runBacktest(symbol, timeframe, start, end);
 
         // 백테스트 완료 후 애플리케이션을 종료합니다.
         System.exit(0);

@@ -10,31 +10,18 @@ import java.math.BigDecimal;
 import java.time.Instant;
 
 /**
- * 데이터베이스의 'candles' 테이블과 매핑되는 엔티티 클래스입니다.
- * 캔들(봉) 데이터를 저장하며, 각 캔들은 특정 시간 동안의 가격 변동(시가, 고가, 저가, 종가)과 거래량을 나타냅니다.
- * 이 데이터는 기술적 분석 및 백테스팅에 사용됩니다.
+ * 데이터베이스의 'candles' 하이퍼테이블과 매핑되는 엔티티 클래스입니다.
+ * TimescaleDB에 최적화된 구조로, open_time, symbol, timeframe을 복합 기본 키로 사용합니다.
  */
 @Entity
-@Table(name = "candles", indexes = {
-    // 'symbol'과 'open_time' 컬럼에 복합 유니크 인덱스를 생성합니다.
-    // 동일한 코인의 동일한 시작 시간을 가진 캔들이 중복 저장되는 것을 방지하여 데이터 무결성을 보장합니다.
-    @Index(name = "idx_symbol_open_time", columnList = "symbol, open_time", unique = true)
-})
+@Table(name = "candles")
 @Getter
-@NoArgsConstructor(access = AccessLevel.PROTECTED) // JPA 스펙을 위한 기본 생성자
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Candle {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-
-    // 코인 심볼 (예: "BTCUSDT")
-    @Column(name = "symbol", nullable = false, length = 20)
-    private String symbol;
-
-    // 캔들 시작 시간
-    @Column(name = "open_time", nullable = false)
-    private Instant openTime;
+    // 복합 기본 키를 포함하는 @EmbeddedId
+    @EmbeddedId
+    private CandleId id;
 
     // 캔들 마감 시간
     @Column(name = "close_time", nullable = false)
@@ -60,22 +47,30 @@ public class Candle {
     @Column(name = "volume", nullable = false, precision = 20, scale = 8)
     private BigDecimal volume;
 
-    // 캔들 시간 간격 (예: "1m", "5m")
-    @Column(name = "interval", nullable = false, precision = 20, scale = 8)
-    private String interval;
     /**
      * 빌더 패턴을 사용하여 Candle 객체를 생성하기 위한 생성자입니다.
      */
     @Builder
-    public Candle(String symbol, Instant openTime, Instant closeTime, BigDecimal open, BigDecimal high, BigDecimal low, BigDecimal close, BigDecimal volume, String interval) {
-        this.symbol = symbol;
-        this.openTime = openTime;
+    public Candle(CandleId id, Instant closeTime, BigDecimal open, BigDecimal high, BigDecimal low, BigDecimal close, BigDecimal volume) {
+        this.id = id;
         this.closeTime = closeTime;
         this.open = open;
         this.high = high;
         this.low = low;
         this.close = close;
         this.volume = volume;
-        this.interval = interval;
+    }
+
+    // 편의 메서드들
+    public String getSymbol() {
+        return this.id != null ? this.id.getSymbol() : null;
+    }
+
+    public Instant getOpenTime() {
+        return this.id != null ? this.id.getOpenTime() : null;
+    }
+
+    public String getTimeframe() {
+        return this.id != null ? this.id.getTimeframe() : null;
     }
 }
