@@ -1,6 +1,10 @@
 spring:
   profiles:
-    active: backtest # 'backtest' 프로필을 활성화합니다. 실시간 운영 시 이 라인을 주석 처리하거나 'live'로 변경하세요.
+    # active profile은 외부(예: IDE 실행 설정, 커맨드라인 인자)에서 주입합니다.
+    # 'local' 프로필을 사용하면 백테스트가 실행됩니다. (아래 group 설정 참고)
+    # 아무것도 지정하지 않으면 'main' 또는 'default' 로직이 실행됩니다.
+    group:
+      local: "backtest"
   application:
     name: biner
   datasource:
@@ -27,7 +31,7 @@ spring:
 
 logging:
   level:
-    com.biner: INFO # 기본 로그 레벨을 INFO로 설정
+    com.biner: DEBUG # 기본 로그 레벨을 INFO로 설정
     com.biner.backtest: DEBUG # 백테스트 관련 로그는 상세히 보도록 DEBUG로 설정
     com.biner.strategy.engine: DEBUG
 
