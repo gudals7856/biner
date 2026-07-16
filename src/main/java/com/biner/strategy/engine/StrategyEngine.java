@@ -19,9 +19,14 @@ import org.ta4j.core.BaseBarSeries;
 import org.ta4j.core.indicators.EMAIndicator;
 import org.ta4j.core.indicators.MACDIndicator;
 import org.ta4j.core.indicators.RSIIndicator;
+import org.ta4j.core.indicators.SMAIndicator;
+import org.ta4j.core.indicators.bollinger.BollingerBandsLowerIndicator;
+import org.ta4j.core.indicators.bollinger.BollingerBandsMiddleIndicator;
+import org.ta4j.core.indicators.bollinger.BollingerBandsUpperIndicator;
 import org.ta4j.core.indicators.helpers.ClosePriceIndicator;
 import org.ta4j.core.indicators.ichimoku.IchimokuKijunSenIndicator;
 import org.ta4j.core.indicators.ichimoku.IchimokuTenkanSenIndicator;
+import org.ta4j.core.indicators.statistics.StandardDeviationIndicator;
 import org.ta4j.core.num.Num;
 
 import java.math.BigDecimal;
@@ -31,8 +36,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 시장 데이터(캔들)를 바탕으로 기술적 지표를 계산하고,
- * 매수(진입) 또는 물타기(DCA) 시그널을 발생하는 전략 엔진입니다.
- * 이 엔진은 실시간 트레이딩과 백테스팅 양쪽에서 모두 사용됩니다.
+ * 매수(진입) 또는 물타기(DCA), 청산(익절/손절) 시그널을 발생하는 전략 엔진입니다.
  */
 @Slf4j
 @Service
@@ -54,11 +58,12 @@ public class StrategyEngine {
 
     // 3. RSI (Relative Strength Index): 과매수/과매도 구간 판단용 (역추세 눌림목 타점)
     private static final int RSI_BAR_COUNT = 14;
-    private static final double RSI_OVERSOLD_THRESHOLD = 45.0; // RSI가 45 미만일 때 과매도(매수 고려)로 판단
-    private static final double RSI_OVERBOUGHT_THRESHOLD = 70.0; // RSI가 70 초과일 때 과매수(익절 고려)로 판단
+    private static final double RSI_OVERSOLD_THRESHOLD = 45.0;
+    private static final double RSI_OVERBOUGHT_THRESHOLD = 70.0; // 익절 조건
 
-    // 4. 볼린저 밴드 (Bollinger Bands): 변동성 기반의 지지/저항 판단용 (하단 터치 시 매수 고려)
-    // (세부 로직은 BollingerTouchStrategy 클래스에 위임)
+    // 4. 볼린저 밴드 (Bollinger Bands)
+    private static final int BOLLINGER_BAR_COUNT = 20;
+    private static final double BOLLINGER_DEVIATION_MULTIPLIER = 2.0;
 
     // 5. 리스크 관리 및 자금 관리 (DCA - Dollar Cost Averaging)
     private static final BigDecimal BASE_ENTRY_PERCENT = new BigDecimal("0.05"); // 최초 진입 시 전체 시드의 5% 사용
@@ -162,17 +167,57 @@ public class StrategyEngine {
     }
 
     /**
-     * 이미 보유 중인 포지션에 대해 물타기(DCA) 조건을 검사합니다.
+     * 보유 중인 포지션에 대해 익절, 손절, 또는 물타기(DCA)를 결정합니다.
      */
     private void handleExistingPosition(Position position, BarSeries series, CandleClosedEvent currentCandle) {
         // 1. 익절 또는 손절 신호가 있는지 먼저 확인합니다.
         boolean exitSignalFound = checkForExitSignal(position, series, currentCandle);
         if (exitSignalFound) {
-            return; // 출구 신호가 발생했으면 물타기 로직은 실행하지 않음
+            return; // 청산 신호가 발생했으면 물타기 로직은 실행하지 않음
         }
 
-        // 2. 출구 신호가 없다면, 물타기(DCA) 조건을 검토합니다.
-        // 백테스트 시에는 MockExecutionService의 dcaCount를 사용합니다.
+        // 2. 청산 신호가 없다면, 물타기(DCA) 조건을 검토합니다.
+        checkForDcaSignal(position, series, currentCandle);
+    }
+
+    /**
+     * 보유 중인 포지션에 대한 익절(Take-Profit) 및 손절(Stop-Loss) 조건을 확인합니다.
+     * @return 청산 신호가 발생하여 이벤트를 발행했으면 true
+     */
+    private boolean checkForExitSignal(Position position, BarSeries series, CandleClosedEvent currentCandle) {
+        // ================== 익절(Take-Profit) 로직 ==================
+        // 전략 1: RSI가 과매수 구간에 진입했을 때 익절 (추천)
+        if (isRsiOverbought(series)) {
+            createAndPublishExitSignal(position, currentCandle.close(), "익절: RSI 과매수");
+            return true;
+        }
+
+        // 전략 2: 볼린저 밴드 상단 터치 시 익절
+        if (touchesUpperBand(series, currentCandle)) {
+            createAndPublishExitSignal(position, currentCandle.close(), "익절: 볼린저 밴드 상단 터치");
+            return true;
+        }
+
+        // ================== 손절(Stop-Loss) 로직 ==================
+        // 전략 1: MACD 데드크로스 발생 시 손절 (추천)
+        if (isMacdDeadCross(series)) {
+            createAndPublishExitSignal(position, currentCandle.close(), "손절: MACD 데드크로스");
+            return true;
+        }
+
+        // 전략 2: 가격이 기준선(Kijun-sen) 아래로 마감될 때 손절 (강력 추천 - 트레일링 스탑)
+        if (isPriceBelowKijunSen(series)) {
+            createAndPublishExitSignal(position, currentCandle.close(), "손절: 기준선 하향 이탈");
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * 물타기(DCA) 조건을 검사하고, 충족 시 신호를 발생시킵니다.
+     */
+    private void checkForDcaSignal(Position position, BarSeries series, CandleClosedEvent currentCandle) {
         int dcaCount = position.getSymbol().contains("BACKTEST")
                 ? mockExecutionService.getDcaCount()
                 : position.getDcaCount();
@@ -213,44 +258,11 @@ public class StrategyEngine {
     }
 
     /**
-     * 보유 중인 포지션에 대한 익절(Take-Profit) 및 손절(Stop-Loss) 조건을 확인합니다.
-     * @return 출구 신호가 발생하여 이벤트를 발행했으면 true
-     */
-    private boolean checkForExitSignal(Position position, BarSeries series, CandleClosedEvent currentCandle) {
-        // ================== 익절(Take-Profit) 로직 ==================
-        // 전략 1: RSI가 과매수 구간에 진입했을 때 익절
-        if (isRsiOverbought(series)) {
-            createAndPublishExitSignal(position, currentCandle.close(), "익절: RSI 과매수");
-            return true;
-        }
-
-        // ================== 손절(Stop-Loss) 로직 ==================
-        // 전략 2: MACD 데드크로스 발생 시 손절 (추세 이탈)
-        if (isMacdDeadCross(series)) {
-            createAndPublishExitSignal(position, currentCandle.close(), "손절: MACD 데드크로스");
-            return true;
-        }
-
-        // 전략 3: 가격이 기준선(Kijun-sen) 아래로 마감될 때 손절 (트레일링 스탑)
-        if (isPriceBelowKijunSen(series)) {
-            createAndPublishExitSignal(position, currentCandle.close(), "손절: 기준선 하향 이탈");
-            return true;
-        }
-
-        // 여기에 다른 출구 전략들을 추가할 수 있습니다. (예: 볼린저밴드 상단 터치, PSAR 전환 등)
-
-        return false;
-    }
-
-    /**
-     * 출구 신호(익절/손절) 객체를 생성하고 이벤트를 발행합니다.
-     * (참고: TradeSignal.SignalType에 CLOSE_LONG, CLOSE_SHORT 같은 타입이 필요할 수 있습니다.)
+     * 청산 신호(익절/손절) 객체를 생성하고 이벤트를 발행합니다.
      */
     private void createAndPublishExitSignal(Position position, BigDecimal exitPrice, String reason) {
-        // 현재 포지션과 반대되는 신호를 생성하여 포지션을 청산하도록 합니다.
-        // 만약 SignalType에 CLOSE_LONG/CLOSE_SHORT가 있다면 그것을 사용하는 것이 더 명확합니다.
         TradeSignal.SignalType exitSignalType = (position.getSide() == Position.PositionSide.LONG)
-                ? TradeSignal.SignalType.CLOSE_LONG // 이 타입이 없다면 반대 포지션(SHORT) 신호로 대체
+                ? TradeSignal.SignalType.CLOSE_LONG
                 : TradeSignal.SignalType.CLOSE_SHORT;
 
         TradeSignal exitSignal = new TradeSignal(
@@ -265,7 +277,7 @@ public class StrategyEngine {
     }
 
     // =================================================================
-    // 기술적 지표 계산 로직 (ta4j 라이브러리 사용)
+    // 기술적 지표 계산 로직
     // =================================================================
 
     /**
@@ -288,9 +300,7 @@ public class StrategyEngine {
         EMAIndicator signalLine = new EMAIndicator(macd, MACD_SIGNAL_LINE_COUNT);
 
         int currentIndex = series.getEndIndex();
-        if (currentIndex < 1) {
-            return false; // 최소 2개의 데이터 포인트가 필요
-        }
+        if (currentIndex < 1) return false;
         int prevIndex = currentIndex - 1;
 
         Num prevMacd = macd.getValue(prevIndex);
@@ -303,7 +313,6 @@ public class StrategyEngine {
 
     /**
      * MACD가 시그널선을 하향 돌파(데드 크로스)했는지 확인합니다.
-     * @return (이전 MACD > 이전 Signal) && (현재 MACD <= 현재 Signal) 이면 true
      */
     private boolean isMacdDeadCross(BarSeries series) {
         ClosePriceIndicator closePrice = new ClosePriceIndicator(series);
@@ -311,9 +320,7 @@ public class StrategyEngine {
         EMAIndicator signalLine = new EMAIndicator(macd, MACD_SIGNAL_LINE_COUNT);
 
         int currentIndex = series.getEndIndex();
-        if (currentIndex < 1) {
-            return false;
-        }
+        if (currentIndex < 1) return false;
         int prevIndex = currentIndex - 1;
 
         Num prevMacd = macd.getValue(prevIndex);
@@ -362,5 +369,25 @@ public class StrategyEngine {
     private boolean touchesLowerBand(BarSeries series, CandleClosedEvent currentCandle) {
         BollingerTouchStrategy bollingerStrategy = bollingerStrategyFactory.getStrategy(currentCandle.interval(), series);
         return bollingerStrategy.isTouched(series, currentCandle);
+    }
+
+    /**
+     * 현재 가격이 볼린저 밴드 상단을 터치했는지 확인합니다.
+     * @return 현재 캔들의 종가 또는 고가가 상단 밴드 값보다 크거나 같으면 true
+     */
+    private boolean touchesUpperBand(BarSeries series, CandleClosedEvent currentCandle) {
+        ClosePriceIndicator closePrice = new ClosePriceIndicator(series);
+        SMAIndicator sma = new SMAIndicator(closePrice, BOLLINGER_BAR_COUNT);
+        BollingerBandsMiddleIndicator bbMiddle = new BollingerBandsMiddleIndicator(sma);
+        StandardDeviationIndicator sd = new StandardDeviationIndicator(closePrice, BOLLINGER_BAR_COUNT);
+        BollingerBandsUpperIndicator bbUpper = new BollingerBandsUpperIndicator(bbMiddle, sd, series.numOf(BOLLINGER_DEVIATION_MULTIPLIER));
+
+        Num upperBandNum = bbUpper.getValue(series.getEndIndex());
+        BigDecimal upperBandValue = new BigDecimal(upperBandNum.toString());
+
+        BigDecimal currentClose = currentCandle.close();
+        BigDecimal currentHigh = currentCandle.high();
+
+        return currentClose.compareTo(upperBandValue) >= 0 || currentHigh.compareTo(upperBandValue) >= 0;
     }
 }
