@@ -66,7 +66,7 @@ public class StrategyEngine {
     private static final double BOLLINGER_DEVIATION_MULTIPLIER = 2.0;
 
     // 5. 리스크 관리 및 자금 관리 (DCA - Dollar Cost Averaging)
-    private static final BigDecimal BASE_ENTRY_PERCENT = new BigDecimal("0.05"); // 최초 진입 시 전체 시드의 5% 사용
+    private static final BigDecimal BASE_ENTRY_PERCENT = new BigDecimal("0.20"); // 최초 진입 시 전체 시드의 20% 사용
     private static final BigDecimal DCA_DROP_PERCENT = new BigDecimal("0.015");  // 평단가 대비 1.5% 하락 시 물타기 실행
     private static final int MAX_DCA_COUNT = 4; // 최대 분할매수 횟수 (최초 진입 1 + 물타기 3)
 
