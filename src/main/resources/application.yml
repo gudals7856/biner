@@ -1,10 +1,8 @@
+# ===================================================================
+# 기본 설정 파일 (Default Profile)
+# 프로필을 지정하지 않으면 이 파일이 사용됩니다. (실시간 운영 모드)
+# ===================================================================
 spring:
-  profiles:
-    # active profile은 외부(예: IDE 실행 설정, 커맨드라인 인자)에서 주입합니다.
-    # 'local' 프로필을 사용하면 백테스트가 실행됩니다. (아래 group 설정 참고)
-    # 아무것도 지정하지 않으면 'main' 또는 'default' 로직이 실행됩니다.
-    group:
-      local: "backtest"
   application:
     name: biner
   datasource:
@@ -18,23 +16,37 @@ spring:
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
-  
   # Flyway 설정 추가
   flyway:
     enabled: true
     baseline-on-migrate: true # DB에 이미 테이블이 있어도 Flyway가 관리하도록 허용
-
   data:
     redis:
       host: localhost
       port: 6379
 
+# --- 로깅 설정 ---
 logging:
   level:
-    com.biner: DEBUG # 기본 로그 레벨을 INFO로 설정
-    com.biner.backtest: DEBUG # 백테스트 관련 로그는 상세히 보도록 DEBUG로 설정
-    com.biner.strategy.engine: DEBUG
+    com.biner: INFO # 운영 환경에서는 INFO 레벨로 설정하여 불필요한 로그를 줄입니다.
+    com.biner.strategy.engine: DEBUG # 전략 엔진 로그는 상세히 봅니다.
 
+# --- 바이낸스 API 및 거래 설정 ---
+binance:
+  api:
+    url: https://testnet.binancefuture.com # 또는 실제 운영 시: https://fapi.binance.com
+    key: ${BINANCE_API_KEY:dummy_key_for_local_test}
+    secret: ${BINANCE_API_SECRET:dummy_secret_for_local_test}
+  kline:
+    interval: "1m" # 실시간 구독할 캔들 시간봉
+
+# --- 리스크 관리 설정 ---
+trading:
+  risk-management:
+    stop-loss-percent: 0.02  # 손절 2%
+    take-profit-percent: 0.04 # 익절 4%
+
+# --- 안정성 관련 설정 ---
 resilience4j:
   circuitbreaker:
     instances:
@@ -56,21 +68,3 @@ resilience4j:
       binanceApi:
         maxRetryAttempts: 3
         waitDuration: 1s
-
-binance:
-  api:
-    url: https://testnet.binancefuture.com
-    key: ${BINANCE_API_KEY:dummy_key_for_local_test}
-    secret: ${BINANCE_API_SECRET:dummy_secret_for_local_test}
-
-trading:
-  risk-management:
-    stop-loss-percent: 0.02  # 손절 2%
-    take-profit-percent: 0.04 # 익절 4%
-
-# --- 백테스트 전용 설정 ---
-backtest:
-  symbol: "BTCUSDT"
-  timeframe: "1m" # 백테스트할 시간봉
-  start-time: "2023-01-01T00:00:00Z"
-  end-time: "2023-01-31T23:59:59Z"
