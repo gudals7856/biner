@@ -5,6 +5,7 @@ import com.biner.order.domain.Position;
 import com.biner.order.repository.PositionRepository;
 import com.biner.strategy.domain.TradeSignal;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,15 +28,19 @@ public class OrderExecutionService {
     // 바이낸스 선물 거래소 API 호출을 위한 클라이언트
     private final BinanceFuturesClient binanceClient;
 
-    // 손절매(Stop Loss) 비율: 진입가 대비 2% 손실 시 설정
-    private static final BigDecimal STOP_LOSS_PERCENT = new BigDecimal("0.02");
-    
-    // 이익실현(Take Profit) 비율: 진입가 대비 4% 수익 시 설정
-    private static final BigDecimal TAKE_PROFIT_PERCENT = new BigDecimal("0.04");
+    private final BigDecimal stopLossPercent;
+    private final BigDecimal takeProfitPercent;
 
-    public OrderExecutionService(PositionRepository positionRepository, BinanceFuturesClient binanceClient) {
+    public OrderExecutionService(
+            PositionRepository positionRepository,
+            BinanceFuturesClient binanceClient,
+            @Value("${trading.risk-management.stop-loss-percent}") String stopLossPercentStr,
+            @Value("${trading.risk-management.take-profit-percent}") String takeProfitPercentStr
+    ) {
         this.positionRepository = positionRepository;
         this.binanceClient = binanceClient;
+        this.stopLossPercent = new BigDecimal(stopLossPercentStr);
+        this.takeProfitPercent = new BigDecimal(takeProfitPercentStr);
     }
 
     /**
@@ -141,14 +146,14 @@ public class OrderExecutionService {
         // 롱 포지션: 진입가 * (1 - 손절비율) -> 가격이 떨어지면 팝니다.
         // 숏 포지션: 진입가 * (1 + 손절비율) -> 가격이 오르면 삽니다.
         BigDecimal stopFactor = position.getSide() == Position.PositionSide.LONG ? 
-                BigDecimal.ONE.subtract(STOP_LOSS_PERCENT) : BigDecimal.ONE.add(STOP_LOSS_PERCENT);
+                BigDecimal.ONE.subtract(stopLossPercent) : BigDecimal.ONE.add(stopLossPercent);
         BigDecimal stopPrice = position.getEntryPrice().multiply(stopFactor).setScale(2, RoundingMode.HALF_UP);
         
         // 익절가 계산 로직
         // 롱 포지션: 진입가 * (1 + 익절비율) -> 가격이 오르면 팝니다.
         // 숏 포지션: 진입가 * (1 - 익절비율) -> 가격이 떨어지면 삽니다.
         BigDecimal tpFactor = position.getSide() == Position.PositionSide.LONG ? 
-                BigDecimal.ONE.add(TAKE_PROFIT_PERCENT) : BigDecimal.ONE.subtract(TAKE_PROFIT_PERCENT);
+                BigDecimal.ONE.add(takeProfitPercent) : BigDecimal.ONE.subtract(takeProfitPercent);
         BigDecimal takeProfitPrice = position.getEntryPrice().multiply(tpFactor).setScale(2, RoundingMode.HALF_UP);
 
         // 바이낸스에 시장가 손절(STOP_MARKET) 주문을 전송합니다.

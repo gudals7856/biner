@@ -63,6 +63,11 @@ binance:
     key: ${BINANCE_API_KEY:dummy_key_for_local_test}
     secret: ${BINANCE_API_SECRET:dummy_secret_for_local_test}
 
+trading:
+  risk-management:
+    stop-loss-percent: 0.02  # 손절 2%
+    take-profit-percent: 0.04 # 익절 4%
+
 # --- 백테스트 전용 설정 ---
 backtest:
   symbol: "BTCUSDT"
