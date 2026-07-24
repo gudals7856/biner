@@ -2,11 +2,15 @@ package com.biner.order.service;
 
 import com.biner.order.client.BinanceFuturesClient;
 import com.biner.order.domain.Position;
+import com.biner.order.event.OrderFilledEvent;
 import com.biner.order.event.PlaceOrderEvent;
 import com.biner.order.event.PositionChangedEvent;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
@@ -24,6 +28,8 @@ import java.math.RoundingMode;
 public class OrderExecutionService {
 
     private final BinanceFuturesClient binanceClient;
+    private final ApplicationEventPublisher eventPublisher;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${trading.risk-management.stop-loss-percent}")
     private BigDecimal stopLossPercent;
@@ -41,7 +47,24 @@ public class OrderExecutionService {
             log.info("주문 실행 명령 수신: {}", event);
             String response = binanceClient.placeOrder(event.symbol(), event.side(), event.type(), event.quantity(), event.price());
             log.info("바이낸스 주문 응답: {}", response);
-            // TODO: 주문 실패 시 처리 로직 (예: 재시도, 알림)
+
+            // 주문 성공 응답을 파싱하여 실제 체결 정보를 담은 이벤트를 발행합니다.
+            JsonNode rootNode = objectMapper.readTree(response);
+            if (rootNode.has("orderId")) { // 응답에 orderId가 있으면 성공으로 간주
+                String symbol = rootNode.get("symbol").asText();
+                String sideStr = rootNode.get("side").asText();
+                BigDecimal filledQty = new BigDecimal(rootNode.get("cumQty").asText());
+                BigDecimal avgPrice = new BigDecimal(rootNode.get("avgPrice").asText());
+
+                if (filledQty.compareTo(BigDecimal.ZERO) > 0) {
+                    Position.PositionSide side = "BUY".equalsIgnoreCase(sideStr) ? Position.PositionSide.LONG : Position.PositionSide.SHORT;
+                    OrderFilledEvent filledEvent = new OrderFilledEvent(symbol, side, filledQty, avgPrice);
+                    eventPublisher.publishEvent(filledEvent);
+                    log.info("주문 체결 이벤트 발행: {}", filledEvent);
+                }
+            } else {
+                log.error("주문 실패 또는 예외적 응답: {}", response);
+            }
         } catch (Exception e) {
             log.error("주문 실행 중 오류 발생: {}", event, e);
         }

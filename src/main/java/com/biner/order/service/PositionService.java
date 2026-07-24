@@ -3,6 +3,7 @@ package com.biner.order.service;
 import com.biner.account.service.AccountService;
 import com.biner.order.client.BinanceFuturesClient;
 import com.biner.order.domain.Position;
+import com.biner.order.event.OrderFilledEvent;
 import com.biner.order.event.PlaceOrderEvent;
 import com.biner.order.event.PositionChangedEvent;
 import com.biner.order.repository.PositionRepository;
@@ -86,28 +87,29 @@ public class PositionService {
             eventPublisher.publishEvent(new PlaceOrderEvent(signal.symbol(), side, "MARKET", quantity, null));
             log.info("시장가 주문 실행 이벤트 발행: {} {} {}", side, quantity, signal.symbol());
 
-            // 5. 주문이 체결되었다고 가정하고, DB의 포지션 상태를 업데이트합니다.
-            updatePositionState(signal, quantity, existingPositionOpt);
-
         } catch (Exception e) {
             log.error("포지션 관리 중 심각한 오류 발생", e);
         }
     }
 
     /**
-     * 신호와 계산된 수량을 바탕으로 DB의 포지션 상태를 업데이트하고 이벤트를 발행합니다.
+     * 실제 주문 체결(OrderFilledEvent)을 수신하여 DB의 포지션 상태를 업데이트합니다.
+     * 이 메소드는 실제 체결된 데이터에 기반하므로 시스템의 데이터 정합성을 보장합니다.
      */
-    private void updatePositionState(TradeSignal signal, BigDecimal quantity, Optional<Position> existingPositionOpt) {
-        Position positionToSave;
-        Position.PositionSide targetSide = signal.type() == TradeSignal.SignalType.LONG
-                ? Position.PositionSide.LONG : Position.PositionSide.SHORT;
+    @EventListener
+    @Transactional
+    public void handleOrderFilled(OrderFilledEvent event) {
+        log.info("주문 체결 완료. DB 상태 업데이트 시작: {}", event);
 
-        if (existingPositionOpt.isPresent() && existingPositionOpt.get().getSide() == targetSide) {
+        Optional<Position> existingPositionOpt = positionRepository.findBySymbolAndStatus(event.symbol(), Position.PositionStatus.OPEN);
+
+        Position positionToSave;
+        if (existingPositionOpt.isPresent() && existingPositionOpt.get().getSide() == event.side()) {
             // 물타기 로직: 평균 단가 및 수량 재계산
             Position existing = existingPositionOpt.get();
             BigDecimal oldTotalValue = existing.getEntryPrice().multiply(existing.getAmount());
-            BigDecimal addedValue = signal.price().multiply(quantity);
-            BigDecimal newTotalAmount = existing.getAmount().add(quantity);
+            BigDecimal addedValue = event.avgPrice().multiply(event.filledQty());
+            BigDecimal newTotalAmount = existing.getAmount().add(event.filledQty());
             BigDecimal newAvgPrice = oldTotalValue.add(addedValue).divide(newTotalAmount, 8, RoundingMode.HALF_UP);
             int newDcaCount = existing.getDcaCount() + 1;
 
@@ -117,10 +119,10 @@ public class PositionService {
         } else {
             // 신규 진입 로직
             positionToSave = Position.builder()
-                    .symbol(signal.symbol())
-                    .side(targetSide)
-                    .entryPrice(signal.price())
-                    .amount(quantity)
+                    .symbol(event.symbol())
+                    .side(event.side())
+                    .entryPrice(event.avgPrice())
+                    .amount(event.filledQty())
                     .leverage(1)
                     .dcaCount(1)
                     .build();
