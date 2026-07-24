@@ -17,7 +17,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 포지션과 관련된 모든 비즈니스 로직과 상태 관리를 책임지는 '두뇌' 역할을 하는 서비스입니다.
@@ -36,6 +39,11 @@ public class PositionService {
 
     private static final String QUOTE_ASSET = "USDT"; // 견적 자산 (주문 수량 계산 기준)
 
+    // 동시성 제어를 위한 인-메모리 잠금
+    private final Set<String> lockedSymbols = ConcurrentHashMap.newKeySet();
+    // 처리 중인 신호를 저장하기 위한 맵 (최신 신호로 교체)
+    private final Map<String, TradeSignal> pendingSignals = new ConcurrentHashMap<>();
+
     /**
      * 전략 엔진에서 발생한 TradeSignal을 수신하여 포지션 관리 로직을 시작합니다.
      */
@@ -46,9 +54,16 @@ public class PositionService {
             return;
         }
 
-        log.info("포지션 서비스가 트레이드 신호를 수신했습니다: {}", signal);
+        // 잠금을 시도하고, 이미 처리 중인 심볼이면 대기열에 추가(교체)합니다.
+        if (!lockedSymbols.add(signal.symbol())) {
+            log.info("[{}] 심볼은 현재 다른 주문이 처리 중이므로, 수신된 신호를 대기열에 추가합니다: {}", signal.symbol(), signal);
+            pendingSignals.put(signal.symbol(), signal);
+            return;
+        }
 
         try {
+            log.info("포지션 서비스가 트레이드 신호를 수신했습니다: {}", signal);
+
             // 1. 현재 계좌의 가용 잔고(USDT)를 조회합니다.
             BigDecimal availableBalance = accountService.getAvailableBalance(QUOTE_ASSET);
             if (availableBalance.compareTo(BigDecimal.TEN) < 0) { // 최소 주문 금액(예: 10 USDT) 체크
@@ -89,6 +104,16 @@ public class PositionService {
 
         } catch (Exception e) {
             log.error("포지션 관리 중 심각한 오류 발생", e);
+        } finally {
+            // 처리가 끝나면 잠금을 해제하고, 대기 중인 신호가 있으면 재처리합니다.
+            lockedSymbols.remove(signal.symbol());
+            log.debug("[{}] 심볼 처리가 완료되어 잠금을 해제합니다.", signal.symbol());
+
+            TradeSignal pending = pendingSignals.remove(signal.symbol());
+            if (pending != null) {
+                log.info("[{}] 심볼에 대한 대기 신호가 있어 재처리를 시작합니다: {}", pending.symbol(), pending);
+                eventPublisher.publishEvent(pending);
+            }
         }
     }
 
