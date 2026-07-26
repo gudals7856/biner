@@ -10,6 +10,7 @@ import com.biner.order.repository.PositionRepository;
 import com.biner.strategy.domain.TradeSignal;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
@@ -36,6 +37,9 @@ public class PositionService {
     private final BinanceFuturesClient binanceClient;
     private final ApplicationEventPublisher eventPublisher;
     private final AccountService accountService; // 계좌 정보 조회를 위한 서비스
+
+    @Value("${trading.dca.max-count:4}")
+    private int maxDcaCount;
 
     private static final String QUOTE_ASSET = "USDT"; // 견적 자산 (주문 수량 계산 기준)
 
@@ -160,7 +164,7 @@ public class PositionService {
                 BigDecimal newAvgPrice = oldTotalValue.add(addedValue).divide(newTotalAmount, 8, RoundingMode.HALF_UP);
                 int newDcaCount = existing.getDcaCount() + 1;
 
-                existing.updateDca(newAvgPrice, newTotalAmount, newDcaCount);
+                existing.updateDca(newAvgPrice, newTotalAmount, newDcaCount, maxDcaCount);
                 log.info("DCA 처리 완료. 포지션 정보 업데이트: {}", existing);
 
                 Position savedPosition = positionRepository.save(existing);

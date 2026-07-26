@@ -10,6 +10,7 @@ import com.biner.strategy.indicator.bollinger.BollingerTouchStrategy;
 import com.biner.strategy.util.Ta4jConverter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
@@ -66,9 +67,11 @@ public class StrategyEngine {
     private static final double BOLLINGER_DEVIATION_MULTIPLIER = 2.0;
 
     // 5. 리스크 관리 및 자금 관리 (DCA - Dollar Cost Averaging)
+    @Value("${trading.dca.max-count:4}")
+    private int maxDcaCount;
+    
     private static final BigDecimal BASE_ENTRY_PERCENT = new BigDecimal("0.20"); // 최초 진입 시 전체 시드의 20% 사용
     private static final BigDecimal DCA_DROP_PERCENT = new BigDecimal("0.015");  // 평단가 대비 1.5% 하락 시 물타기 실행
-    private static final int MAX_DCA_COUNT = 4; // 최대 분할매수 횟수 (최초 진입 1 + 물타기 3)
 
     // 기술적 지표 계산에 사용할 최대 캔들 개수 (메모리 관리)
     private static final int MAX_BAR_COUNT = 200;
@@ -170,6 +173,15 @@ public class StrategyEngine {
      * 보유 중인 포지션에 대해 익절, 손절, 또는 물타기(DCA)를 결정합니다.
      */
     private void handleExistingPosition(Position position, BarSeries series, CandleClosedEvent currentCandle) {
+        // 0. (최우선) 최대 물타기 횟수에 도달한 경우, 본전 탈출을 최우선으로 시도합니다.
+        if (position.isMaxDcaReached()) {
+            if (currentCandle.close().compareTo(position.getEntryPrice()) >= 0) {
+                log.info("🚨 최대 물타기 포지션 본전 탈출 조건 충족!");
+                createAndPublishExitSignal(position, currentCandle.close(), "본전 탈출: 최대 물타기 도달");
+                return;
+            }
+        }
+
         // 1. 익절 또는 손절 신호가 있는지 먼저 확인합니다.
         boolean exitSignalFound = checkForExitSignal(position, series, currentCandle);
         if (exitSignalFound) {
@@ -226,13 +238,14 @@ public class StrategyEngine {
      * 물타기(DCA) 조건을 검사하고, 충족 시 신호를 발생시킵니다.
      */
     private void checkForDcaSignal(Position position, BarSeries series, CandleClosedEvent currentCandle) {
+        // 최대 물타기 횟수에 도달한 포지션은 더 이상 물타기를 시도하지 않습니다.
+        if (position.isMaxDcaReached()) {
+            return;
+        }
+        
         int dcaCount = position.getSymbol().contains("BACKTEST")
                 ? mockExecutionService.getDcaCount()
                 : position.getDcaCount();
-
-        if (dcaCount >= MAX_DCA_COUNT) {
-            return; // 최대 물타기 횟수 초과 시 더 이상 진행 안함
-        }
 
         BigDecimal currentPrice = currentCandle.close();
         BigDecimal avgEntryPrice = position.getEntryPrice();
@@ -259,7 +272,7 @@ public class StrategyEngine {
                     BASE_ENTRY_PERCENT, // 물타기 시에도 동일한 비중 사용
                     "DCA(물타기) 신호"
                 );
-                log.info("💧 물타기 신호 발생. 현재 DCA 횟수: {}/{}", dcaCount, MAX_DCA_COUNT);
+                log.info("💧 물타기 신호 발생. 현재 DCA 횟수: {}/{}", dcaCount, maxDcaCount);
                 eventPublisher.publishEvent(dcaSignal);
             }
         }

@@ -54,6 +54,10 @@ public class Position {
     @Column(name = "dca_count", nullable = false)
     private int dcaCount = 0;
 
+    // 최대 물타기 횟수에 도달했는지 여부를 나타내는 플래그
+    @Column(name = "is_max_dca_reached", nullable = false)
+    private boolean isMaxDcaReached = false;
+
     // 포지션 최초 생성(진입) 시각
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
@@ -111,9 +115,12 @@ public class Position {
      * @param newTotalAmount 새롭게 계산된 총 보유 수량
      * @param newDcaCount 업데이트된 누적 물타기 횟수
      */
-    public void updateDca(BigDecimal newAvgPrice, BigDecimal newTotalAmount, int newDcaCount) {
+    public void updateDca(BigDecimal newAvgPrice, BigDecimal newTotalAmount, int newDcaCount, int maxDcaCount) {
         this.entryPrice = newAvgPrice;
         this.amount = newTotalAmount;
         this.dcaCount = newDcaCount;
+        if (newDcaCount >= maxDcaCount) {
+            this.isMaxDcaReached = true;
+        }
     }
 }
