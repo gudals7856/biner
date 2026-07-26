@@ -45,6 +45,26 @@ trading:
   risk-management:
     stop-loss-percent: 0.02  # 손절 2%
     take-profit-percent: 0.04 # 익절 4%
+  general:
+    max-bar-count: 200
+  ichimoku:
+    tenkan-sen-period: 9
+    kijun-sen-period: 26
+  macd:
+    short-bar-count: 12
+    long-bar-count: 26
+    signal-line-count: 9
+  rsi:
+    bar-count: 14
+    oversold-threshold: 45.0
+    overbought-threshold: 70.0
+  bollinger:
+    bar-count: 20
+    deviation-multiplier: 2.0
+  dca:
+    base-entry-percent: "0.20"
+    dca-drop-percent: "0.015"
+    max-count: 4
 
 # --- 안정성 관련 설정 ---
 resilience4j:

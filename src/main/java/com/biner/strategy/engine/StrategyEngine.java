@@ -1,6 +1,7 @@
 package com.biner.strategy.engine;
 
 import com.biner.backtest.engine.MockExecutionService;
+import com.biner.common.config.TradingProperties;
 import com.biner.market.event.CandleClosedEvent;
 import com.biner.order.domain.Position;
 import com.biner.order.repository.PositionRepository;
@@ -10,7 +11,6 @@ import com.biner.strategy.indicator.bollinger.BollingerTouchStrategy;
 import com.biner.strategy.util.Ta4jConverter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
@@ -21,7 +21,6 @@ import org.ta4j.core.indicators.EMAIndicator;
 import org.ta4j.core.indicators.MACDIndicator;
 import org.ta4j.core.indicators.RSIIndicator;
 import org.ta4j.core.indicators.SMAIndicator;
-import org.ta4j.core.indicators.bollinger.BollingerBandsLowerIndicator;
 import org.ta4j.core.indicators.bollinger.BollingerBandsMiddleIndicator;
 import org.ta4j.core.indicators.bollinger.BollingerBandsUpperIndicator;
 import org.ta4j.core.indicators.helpers.ClosePriceIndicator;
@@ -44,42 +43,11 @@ import java.util.concurrent.ConcurrentHashMap;
 @RequiredArgsConstructor
 public class StrategyEngine {
 
-    // =================================================================
-    // [전략 파라미터] 이 값들을 조정하여 전략의 성과를 튜닝할 수 있습니다.
-    // =================================================================
-
-    // 1. 일목균형표 (Ichimoku Cloud): 중장기 추세 판단용
-    private static final int ICHIMOKU_TENKAN_SEN_PERIOD = 9; // 전환선 기간
-    private static final int ICHIMOKU_KIJUN_SEN_PERIOD = 26; // 기준선 기간
-
-    // 2. MACD (Moving Average Convergence Divergence): 단기 추세 및 모멘텀 판단용
-    private static final int MACD_SHORT_BAR_COUNT = 12; // 단기 이동평균
-    private static final int MACD_LONG_BAR_COUNT = 26;  // 장기 이동평균
-    private static final int MACD_SIGNAL_LINE_COUNT = 9; // 시그널선 이동평균
-
-    // 3. RSI (Relative Strength Index): 과매수/과매도 구간 판단용 (역추세 눌림목 타점)
-    private static final int RSI_BAR_COUNT = 14;
-    private static final double RSI_OVERSOLD_THRESHOLD = 45.0;
-    private static final double RSI_OVERBOUGHT_THRESHOLD = 70.0; // 익절 조건
-
-    // 4. 볼린저 밴드 (Bollinger Bands)
-    private static final int BOLLINGER_BAR_COUNT = 20;
-    private static final double BOLLINGER_DEVIATION_MULTIPLIER = 2.0;
-
-    // 5. 리스크 관리 및 자금 관리 (DCA - Dollar Cost Averaging)
-    @Value("${trading.dca.max-count:4}")
-    private int maxDcaCount;
-    
-    private static final BigDecimal BASE_ENTRY_PERCENT = new BigDecimal("0.20"); // 최초 진입 시 전체 시드의 20% 사용
-    private static final BigDecimal DCA_DROP_PERCENT = new BigDecimal("0.015");  // 평단가 대비 1.5% 하락 시 물타기 실행
-
-    // 기술적 지표 계산에 사용할 최대 캔들 개수 (메모리 관리)
-    private static final int MAX_BAR_COUNT = 200;
-
     private final ApplicationEventPublisher eventPublisher;
     private final PositionRepository positionRepository;
     private final BollingerStrategyFactory bollingerStrategyFactory;
     private final MockExecutionService mockExecutionService; // 백테스트를 위해 추가
+    private final TradingProperties tradingProperties; // 외부 설정 주입
 
     // 심볼(코인)별 캔들 데이터(BarSeries)를 저장하는 맵. 동시성 문제 방지를 위해 ConcurrentHashMap 사용.
     private final Map<String, BarSeries> seriesMap = new ConcurrentHashMap<>();
@@ -96,7 +64,7 @@ public class StrategyEngine {
         // 1. 해당 심볼의 BarSeries를 가져오거나, 없으면 새로 생성합니다.
         BarSeries series = seriesMap.computeIfAbsent(symbol, k -> {
             BaseBarSeries newSeries = new BaseBarSeries(symbol + "_1m");
-            newSeries.setMaximumBarCount(MAX_BAR_COUNT); // 메모리에 최대 200개 캔들만 유지
+            newSeries.setMaximumBarCount(tradingProperties.getGeneral().getMaxBarCount());
             return newSeries;
         });
 
@@ -161,7 +129,7 @@ public class StrategyEngine {
               symbol,
               TradeSignal.SignalType.LONG,
               currentCandle.close(),
-              BASE_ENTRY_PERCENT,
+              tradingProperties.getDca().getBaseEntryPercent(),
               "신규 LONG 진입 신호 (Score: " + score + ")"
             );
             log.info("🚀 매수 신호 발생: {}", signal);
@@ -230,7 +198,6 @@ public class StrategyEngine {
                 return true;
             }
         }
-
         return false;
     }
 
@@ -253,7 +220,7 @@ public class StrategyEngine {
         boolean shouldDca = false;
         if (position.getSide() == Position.PositionSide.LONG) {
             // 현재가가 평단가 대비 설정된 비율(DCA_DROP_PERCENT) 이상 하락했는지 확인
-            BigDecimal dcaTriggerPrice = avgEntryPrice.multiply(BigDecimal.ONE.subtract(DCA_DROP_PERCENT));
+            BigDecimal dcaTriggerPrice = avgEntryPrice.multiply(BigDecimal.ONE.subtract(tradingProperties.getDca().getDcaDropPercent()));
             if (currentPrice.compareTo(dcaTriggerPrice) <= 0) {
                 shouldDca = true;
             }
@@ -269,10 +236,10 @@ public class StrategyEngine {
                     position.getSymbol(),
                     TradeSignal.SignalType.LONG,
                     currentPrice,
-                    BASE_ENTRY_PERCENT, // 물타기 시에도 동일한 비중 사용
+                    tradingProperties.getDca().getBaseEntryPercent(),
                     "DCA(물타기) 신호"
                 );
-                log.info("💧 물타기 신호 발생. 현재 DCA 횟수: {}/{}", dcaCount, maxDcaCount);
+                log.info("💧 물타기 신호 발생. 현재 DCA 횟수: {}/{}", dcaCount, tradingProperties.getDca().getMaxCount());
                 eventPublisher.publishEvent(dcaSignal);
             }
         }
@@ -306,8 +273,8 @@ public class StrategyEngine {
      * @return 전환선 >= 기준선 이면 true (상승 추세 또는 횡보)
      */
     private boolean isUptrend(BarSeries series) {
-        IchimokuTenkanSenIndicator tenkanSen = new IchimokuTenkanSenIndicator(series, ICHIMOKU_TENKAN_SEN_PERIOD);
-        IchimokuKijunSenIndicator kijunSen = new IchimokuKijunSenIndicator(series, ICHIMOKU_KIJUN_SEN_PERIOD);
+        IchimokuTenkanSenIndicator tenkanSen = new IchimokuTenkanSenIndicator(series, tradingProperties.getIchimoku().getTenkanSenPeriod());
+        IchimokuKijunSenIndicator kijunSen = new IchimokuKijunSenIndicator(series, tradingProperties.getIchimoku().getKijunSenPeriod());
         return tenkanSen.getValue(series.getEndIndex()).isGreaterThanOrEqual(kijunSen.getValue(series.getEndIndex()));
     }
 
@@ -317,19 +284,15 @@ public class StrategyEngine {
      */
     private boolean isMacdGoldenCross(BarSeries series) {
         ClosePriceIndicator closePrice = new ClosePriceIndicator(series);
-        MACDIndicator macd = new MACDIndicator(closePrice, MACD_SHORT_BAR_COUNT, MACD_LONG_BAR_COUNT);
-        EMAIndicator signalLine = new EMAIndicator(macd, MACD_SIGNAL_LINE_COUNT);
+        MACDIndicator macd = new MACDIndicator(closePrice, tradingProperties.getMacd().getShortBarCount(), tradingProperties.getMacd().getLongBarCount());
+        EMAIndicator signalLine = new EMAIndicator(macd, tradingProperties.getMacd().getSignalLineCount());
 
         int currentIndex = series.getEndIndex();
         if (currentIndex < 1) return false;
         int prevIndex = currentIndex - 1;
 
-        Num prevMacd = macd.getValue(prevIndex);
-        Num prevSignal = signalLine.getValue(prevIndex);
-        Num currentMacd = macd.getValue(currentIndex);
-        Num currentSignal = signalLine.getValue(currentIndex);
-
-        return prevMacd.isLessThan(prevSignal) && currentMacd.isGreaterThanOrEqual(currentSignal);
+        return macd.getValue(prevIndex).isLessThan(signalLine.getValue(prevIndex)) && 
+               macd.getValue(currentIndex).isGreaterThanOrEqual(signalLine.getValue(currentIndex));
     }
 
     /**
@@ -337,19 +300,15 @@ public class StrategyEngine {
      */
     private boolean isMacdDeadCross(BarSeries series) {
         ClosePriceIndicator closePrice = new ClosePriceIndicator(series);
-        MACDIndicator macd = new MACDIndicator(closePrice, MACD_SHORT_BAR_COUNT, MACD_LONG_BAR_COUNT);
-        EMAIndicator signalLine = new EMAIndicator(macd, MACD_SIGNAL_LINE_COUNT);
+        MACDIndicator macd = new MACDIndicator(closePrice, tradingProperties.getMacd().getShortBarCount(), tradingProperties.getMacd().getLongBarCount());
+        EMAIndicator signalLine = new EMAIndicator(macd, tradingProperties.getMacd().getSignalLineCount());
 
         int currentIndex = series.getEndIndex();
         if (currentIndex < 1) return false;
         int prevIndex = currentIndex - 1;
 
-        Num prevMacd = macd.getValue(prevIndex);
-        Num prevSignal = signalLine.getValue(prevIndex);
-        Num currentMacd = macd.getValue(currentIndex);
-        Num currentSignal = signalLine.getValue(currentIndex);
-
-        return prevMacd.isGreaterThan(prevSignal) && currentMacd.isLessThanOrEqual(currentSignal);
+        return macd.getValue(prevIndex).isGreaterThan(signalLine.getValue(prevIndex)) && 
+               macd.getValue(currentIndex).isLessThanOrEqual(signalLine.getValue(currentIndex));
     }
 
     /**
@@ -358,8 +317,8 @@ public class StrategyEngine {
      */
     private boolean isOversold(BarSeries series) {
         ClosePriceIndicator closePrice = new ClosePriceIndicator(series);
-        RSIIndicator rsi = new RSIIndicator(closePrice, RSI_BAR_COUNT);
-        return rsi.getValue(series.getEndIndex()).doubleValue() < RSI_OVERSOLD_THRESHOLD;
+        RSIIndicator rsi = new RSIIndicator(closePrice, tradingProperties.getRsi().getBarCount());
+        return rsi.getValue(series.getEndIndex()).doubleValue() < tradingProperties.getRsi().getOversoldThreshold();
     }
 
     /**
@@ -368,8 +327,8 @@ public class StrategyEngine {
      */
     private boolean isRsiOverbought(BarSeries series) {
         ClosePriceIndicator closePrice = new ClosePriceIndicator(series);
-        RSIIndicator rsi = new RSIIndicator(closePrice, RSI_BAR_COUNT);
-        return rsi.getValue(series.getEndIndex()).doubleValue() > RSI_OVERBOUGHT_THRESHOLD;
+        RSIIndicator rsi = new RSIIndicator(closePrice, tradingProperties.getRsi().getBarCount());
+        return rsi.getValue(series.getEndIndex()).doubleValue() > tradingProperties.getRsi().getOverboughtThreshold();
     }
 
     /**
@@ -377,7 +336,7 @@ public class StrategyEngine {
      * @return 현재 종가 < 기준선 이면 true
      */
     private boolean isPriceBelowKijunSen(BarSeries series) {
-        IchimokuKijunSenIndicator kijunSen = new IchimokuKijunSenIndicator(series, ICHIMOKU_KIJUN_SEN_PERIOD);
+        IchimokuKijunSenIndicator kijunSen = new IchimokuKijunSenIndicator(series, tradingProperties.getIchimoku().getKijunSenPeriod());
         Num kijunSenValue = kijunSen.getValue(series.getEndIndex());
         Num currentClose = series.getLastBar().getClosePrice();
         return currentClose.isLessThan(kijunSenValue);
@@ -398,10 +357,10 @@ public class StrategyEngine {
      */
     private boolean touchesUpperBand(BarSeries series, CandleClosedEvent currentCandle) {
         ClosePriceIndicator closePrice = new ClosePriceIndicator(series);
-        SMAIndicator sma = new SMAIndicator(closePrice, BOLLINGER_BAR_COUNT);
+        SMAIndicator sma = new SMAIndicator(closePrice, tradingProperties.getBollinger().getBarCount());
         BollingerBandsMiddleIndicator bbMiddle = new BollingerBandsMiddleIndicator(sma);
-        StandardDeviationIndicator sd = new StandardDeviationIndicator(closePrice, BOLLINGER_BAR_COUNT);
-        BollingerBandsUpperIndicator bbUpper = new BollingerBandsUpperIndicator(bbMiddle, sd, series.numOf(BOLLINGER_DEVIATION_MULTIPLIER));
+        StandardDeviationIndicator sd = new StandardDeviationIndicator(closePrice, tradingProperties.getBollinger().getBarCount());
+        BollingerBandsUpperIndicator bbUpper = new BollingerBandsUpperIndicator(bbMiddle, sd, series.numOf(tradingProperties.getBollinger().getDeviationMultiplier()));
 
         Num upperBandNum = bbUpper.getValue(series.getEndIndex());
         BigDecimal upperBandValue = new BigDecimal(upperBandNum.toString());
