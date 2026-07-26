@@ -1,6 +1,7 @@
 package com.biner.order.client;
 
 import com.biner.order.client.dto.AccountBalanceResponse;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.github.resilience4j.ratelimiter.annotation.RateLimiter;
 import io.github.resilience4j.retry.annotation.Retry;
@@ -14,6 +15,7 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.function.Consumer;
 
 /**
  * 바이낸스 선물 거래소 API와 직접 통신하는 클라이언트입니다.
@@ -108,6 +110,78 @@ public class BinanceFuturesClient {
                 .retrieve()
                 .bodyToMono(String.class)
                 .block();
+    }
+
+    /**
+     * 사용자 데이터 스트림 웹소켓에 연결하기 위한 Listen Key를 발급받습니다.
+     * @return Listen Key 문자열
+     */
+    @RateLimiter(name = "binanceApi")
+    @CircuitBreaker(name = "binanceApi")
+    public String getListenKey() {
+        long timestamp = Instant.now().toEpochMilli();
+        String queryString = "timestamp=" + timestamp;
+        String signature = generateSignature(queryString, apiSecret);
+        queryString += "&signature=" + signature;
+
+        log.info("Listen Key 발급 요청...");
+
+        String response = webClient.post()
+                .uri(baseUrl + "/fapi/v1/listenKey?" + queryString)
+                .header("X-MBX-APIKEY", apiKey)
+                .retrieve()
+                .bodyToMono(String.class)
+                .block();
+        
+        try {
+            return new ObjectMapper().readTree(response).get("listenKey").asText();
+        } catch (Exception e) {
+            throw new RuntimeException("Listen Key 파싱 실패", e);
+        }
+    }
+
+    /**
+     * Listen Key를 사용하여 사용자 데이터 스트림 웹소켓에 연결합니다.
+     * @param listenKey 발급받은 Listen Key
+     * @param messageConsumer 메시지를 처리할 콜백 함수
+     */
+    public void connectToUserDataStream(String listenKey, Consumer<String> messageConsumer) {
+        try {
+            String webSocketUrl = baseUrl.replace("https", "wss").replace("http", "ws") + "/ws/" + listenKey;
+            log.info("사용자 데이터 웹소켓에 연결합니다: {}", webSocketUrl);
+
+            java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
+            java.net.http.WebSocket.Builder builder = client.newWebSocketBuilder();
+            builder.buildAsync(java.net.URI.create(webSocketUrl), new java.net.http.WebSocket.Listener() {
+                @Override
+                public void onOpen(java.net.http.WebSocket webSocket) {
+                    log.info("웹소켓 연결 성공!");
+                    webSocket.request(1);
+                }
+
+                @Override
+                public java.util.concurrent.CompletionStage<?> onText(java.net.http.WebSocket webSocket, CharSequence data, boolean last) {
+                    messageConsumer.accept(data.toString());
+                    webSocket.request(1);
+                    return null;
+                }
+
+                @Override
+                public java.util.concurrent.CompletionStage<?> onClose(java.net.http.WebSocket webSocket, int statusCode, String reason) {
+                    log.warn("웹소켓 연결이 종료되었습니다. 상태코드: {}, 원인: {}", statusCode, reason);
+                    // TODO: 연결 종료 시 재연결 로직 호출
+                    return null;
+                }
+
+                @Override
+                public void onError(java.net.http.WebSocket webSocket, Throwable error) {
+                    log.error("웹소켓 오류 발생", error);
+                }
+            }).join();
+
+        } catch (Exception e) {
+            throw new RuntimeException("웹소켓 연결 중 오류 발생", e);
+        }
     }
 
     public String orderFallback(String symbol, String side, String type, BigDecimal quantity, BigDecimal price, Throwable t) {
