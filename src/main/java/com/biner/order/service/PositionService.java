@@ -70,6 +70,11 @@ public class PositionService {
                     log.warn("청산 신호가 수신되었으나, DB에 해당 포지션이 없습니다: {}", signal);
                     return;
                 }
+                
+                // '전략적 청산'을 실행하기 전에, 거래소에 미리 걸어둔 OCO 주문을 먼저 취소합니다.
+                String cancelResponse = binanceClient.cancelAllOpenOrders(signal.symbol());
+                log.info("전략적 청산을 위해 기존 OCO 주문을 취소했습니다: {}", cancelResponse);
+
                 Position position = existingPositionOpt.get();
                 String side = (signal.type() == TradeSignal.SignalType.CLOSE_LONG) ? "SELL" : "BUY";
                 eventPublisher.publishEvent(new PlaceOrderEvent(signal.symbol(), side, "MARKET", position.getAmount(), null));
