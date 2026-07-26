@@ -185,30 +185,38 @@ public class StrategyEngine {
      * @return 청산 신호가 발생하여 이벤트를 발행했으면 true
      */
     private boolean checkForExitSignal(Position position, BarSeries series, CandleClosedEvent currentCandle) {
-        // ================== 익절(Take-Profit) 로직 ==================
-        // 전략 1: RSI가 과매수 구간에 진입했을 때 익절 (추천)
-        if (isRsiOverbought(series)) {
-            createAndPublishExitSignal(position, currentCandle.close(), "익절: RSI 과매수");
-            return true;
-        }
+        BigDecimal currentPrice = currentCandle.close();
+        BigDecimal entryPrice = position.getEntryPrice();
 
-        // 전략 2: 볼린저 밴드 상단 터치 시 익절
-        if (touchesUpperBand(series, currentCandle)) {
-            createAndPublishExitSignal(position, currentCandle.close(), "익절: 볼린저 밴드 상단 터치");
-            return true;
-        }
+        // 현재가가 평단가보다 높은 경우, 익절 조건만 확인
+        if (currentPrice.compareTo(entryPrice) > 0) {
+            // ================== 익절(Take-Profit) 로직 ==================
+            // 전략 1: RSI가 과매수 구간에 진입했을 때 익절 (추천)
+            if (isRsiOverbought(series)) {
+                createAndPublishExitSignal(position, currentPrice, "익절: RSI 과매수");
+                return true;
+            }
 
-        // ================== 손절(Stop-Loss) 로직 ==================
-        // 전략 1: MACD 데드크로스 발생 시 손절 (추천)
-        if (isMacdDeadCross(series)) {
-            createAndPublishExitSignal(position, currentCandle.close(), "손절: MACD 데드크로스");
-            return true;
+            // 전략 2: 볼린저 밴드 상단 터치 시 익절
+            if (touchesUpperBand(series, currentCandle)) {
+                createAndPublishExitSignal(position, currentPrice, "익절: 볼린저 밴드 상단 터치");
+                return true;
+            }
         }
+        // 현재가가 평단가보다 낮은 경우, 손절 조건만 확인
+        else if (currentPrice.compareTo(entryPrice) < 0) {
+            // ================== 손절(Stop-Loss) 로직 ==================
+            // 전략 1: MACD 데드크로스 발생 시 손절 (추천)
+            if (isMacdDeadCross(series)) {
+                createAndPublishExitSignal(position, currentPrice, "손절: MACD 데드크로스");
+                return true;
+            }
 
-        // 전략 2: 가격이 기준선(Kijun-sen) 아래로 마감될 때 손절 (강력 추천 - 트레일링 스탑)
-        if (isPriceBelowKijunSen(series)) {
-            createAndPublishExitSignal(position, currentCandle.close(), "손절: 기준선 하향 이탈");
-            return true;
+            // 전략 2: 가격이 기준선(Kijun-sen) 아래로 마감될 때 손절 (강력 추천 - 트레일링 스탑)
+            if (isPriceBelowKijunSen(series)) {
+                createAndPublishExitSignal(position, currentPrice, "손절: 기준선 하향 이탈");
+                return true;
+            }
         }
 
         return false;
