@@ -12,7 +12,6 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
-import java.util.function.Consumer;
 
 /**
  * 바이낸스 사용자 데이터 웹소켓 스트림을 구독하고,
@@ -28,24 +27,41 @@ public class BinanceUserDataStreamListener {
     private final ApplicationEventPublisher eventPublisher;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    private static final long INITIAL_RECONNECT_DELAY_MS = 1000; // 1초
+    private static final long MAX_RECONNECT_DELAY_MS = 60000; // 60초
+
     /**
      * 애플리케이션이 시작된 후 자동으로 웹소켓 리스닝을 시작합니다.
      */
     @PostConstruct
     public void startListening() {
         new Thread(() -> {
-            try {
-                log.info("바이낸스 사용자 데이터 스트림 리스너를 시작합니다...");
-                // 1. 웹소켓 연결을 위한 Listen Key를 발급받습니다.
-                String listenKey = binanceClient.getListenKey();
-                log.info("Listen Key를 발급받았습니다: {}", listenKey);
+            long reconnectDelay = INITIAL_RECONNECT_DELAY_MS;
+            while (!Thread.currentThread().isInterrupted()) {
+                try {
+                    log.info("바이낸스 사용자 데이터 스트림 리스너를 시작합니다...");
+                    // 1. 웹소켓 연결을 위한 Listen Key를 발급받습니다.
+                    String listenKey = binanceClient.getListenKey();
+                    log.info("Listen Key를 발급받았습니다: {}", listenKey);
 
-                // 2. Listen Key를 사용하여 웹소켓에 연결하고, 메시지 핸들러를 등록합니다.
-                binanceClient.connectToUserDataStream(listenKey, this::handleWebSocketMessage);
+                    // 2. Listen Key를 사용하여 웹소켓에 연결하고, 메시지 핸들러를 등록합니다.
+                    // 이 메소드는 연결이 끊어질 때까지 블로킹됩니다.
+                    binanceClient.connectToUserDataStream(listenKey, this::handleWebSocketMessage);
+                    
+                    // 연결이 정상적으로 수립되었었으므로, 재연결 딜레이를 초기화합니다.
+                    reconnectDelay = INITIAL_RECONNECT_DELAY_MS;
 
-            } catch (Exception e) {
-                log.error("바이낸스 사용자 데이터 스트림 연결에 실패했습니다.", e);
-                // TODO: 연결 실패 시 일정 시간 후 재시도하는 로직 추가
+                } catch (Exception e) {
+                    log.error("바이낸스 사용자 데이터 스트림 연결 또는 처리 중 오류 발생. {}ms 후 재연결을 시도합니다.", reconnectDelay, e);
+                    try {
+                        Thread.sleep(reconnectDelay);
+                        // 지수 백오프: 재연결 딜레이를 두 배로 늘리되, 최대치를 넘지 않도록 합니다.
+                        reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY_MS);
+                    } catch (InterruptedException ie) {
+                        log.warn("재연결 대기 중 스레드가 중단되었습니다.");
+                        Thread.currentThread().interrupt();
+                    }
+                }
             }
         }).start();
     }
