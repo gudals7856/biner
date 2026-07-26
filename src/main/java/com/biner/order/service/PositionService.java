@@ -54,7 +54,6 @@ public class PositionService {
             return;
         }
 
-        // 잠금을 시도하고, 이미 처리 중인 심볼이면 대기열에 추가(교체)합니다.
         if (!lockedSymbols.add(signal.symbol())) {
             log.info("[{}] 심볼은 현재 다른 주문이 처리 중이므로, 수신된 신호를 대기열에 추가합니다: {}", signal.symbol(), signal);
             pendingSignals.put(signal.symbol(), signal);
@@ -63,49 +62,27 @@ public class PositionService {
 
         try {
             log.info("포지션 서비스가 트레이드 신호를 수신했습니다: {}", signal);
-
-            // 1. 현재 계좌의 가용 잔고(USDT)를 조회합니다.
-            BigDecimal availableBalance = accountService.getAvailableBalance(QUOTE_ASSET);
-            if (availableBalance.compareTo(BigDecimal.TEN) < 0) { // 최소 주문 금액(예: 10 USDT) 체크
-                log.warn("가용 잔고({})가 부족하여 주문을 실행할 수 없습니다.", availableBalance);
-                return;
-            }
-
-            // 2. 신호에 담긴 '비율'과 '현재가'를 바탕으로 실제 주문할 '수량'을 계산합니다.
-            BigDecimal investmentAmount = availableBalance.multiply(signal.amount()); // 투자할 금액 (USDT)
-            BigDecimal quantity = investmentAmount.divide(signal.price(), 3, RoundingMode.DOWN); // (금액 / 가격) = 수량
-            log.info("주문 수량 계산 완료: 잔고 {} USDT * 비율 {}% = {} USDT / 현재가 {} = {}개",
-                    availableBalance.setScale(2, RoundingMode.DOWN),
-                    signal.amount().multiply(BigDecimal.valueOf(100)),
-                    investmentAmount.setScale(2, RoundingMode.DOWN),
-                    signal.price(),
-                    quantity);
-
-            if (quantity.compareTo(BigDecimal.ZERO) == 0) {
-                log.warn("계산된 주문 수량이 0이므로 주문을 실행하지 않습니다.");
-                return;
-            }
-
-            Position.PositionSide targetSide = signal.type() == TradeSignal.SignalType.LONG
-                    ? Position.PositionSide.LONG : Position.PositionSide.SHORT;
-
             Optional<Position> existingPositionOpt = positionRepository.findBySymbolAndStatus(signal.symbol(), Position.PositionStatus.OPEN);
 
-            // 3. 물타기(DCA) 시나리오일 경우, 기존 OCO 주문을 먼저 취소합니다.
-            if (existingPositionOpt.isPresent() && existingPositionOpt.get().getSide() == targetSide) {
-                String cancelResponse = binanceClient.cancelAllOpenOrders(signal.symbol());
-                log.info("DCA를 위해 기존 OCO 주문을 취소했습니다: {}", cancelResponse);
+            // 청산 신호 처리
+            if (signal.type() == TradeSignal.SignalType.CLOSE_LONG || signal.type() == TradeSignal.SignalType.CLOSE_SHORT) {
+                if (existingPositionOpt.isEmpty()) {
+                    log.warn("청산 신호가 수신되었으나, DB에 해당 포지션이 없습니다: {}", signal);
+                    return;
+                }
+                Position position = existingPositionOpt.get();
+                String side = (signal.type() == TradeSignal.SignalType.CLOSE_LONG) ? "SELL" : "BUY";
+                eventPublisher.publishEvent(new PlaceOrderEvent(signal.symbol(), side, "MARKET", position.getAmount(), null));
+                log.info("포지션 청산 주문 실행 이벤트 발행: {} {} {}", side, position.getAmount(), signal.symbol());
             }
-
-            // 4. 계산된 최종 '수량'으로 시장가 주문 이벤트를 발행합니다.
-            String side = targetSide == Position.PositionSide.LONG ? "BUY" : "SELL";
-            eventPublisher.publishEvent(new PlaceOrderEvent(signal.symbol(), side, "MARKET", quantity, null));
-            log.info("시장가 주문 실행 이벤트 발행: {} {} {}", side, quantity, signal.symbol());
+            // 신규 진입 또는 물타기 신호 처리
+            else if (signal.type() == TradeSignal.SignalType.LONG || signal.type() == TradeSignal.SignalType.SHORT) {
+                handleEntryOrDcaSignal(signal, existingPositionOpt);
+            }
 
         } catch (Exception e) {
             log.error("포지션 관리 중 심각한 오류 발생", e);
         } finally {
-            // 처리가 끝나면 잠금을 해제하고, 대기 중인 신호가 있으면 재처리합니다.
             lockedSymbols.remove(signal.symbol());
             log.debug("[{}] 심볼 처리가 완료되어 잠금을 해제합니다.", signal.symbol());
 
@@ -115,6 +92,39 @@ public class PositionService {
                 eventPublisher.publishEvent(pending);
             }
         }
+    }
+
+    private void handleEntryOrDcaSignal(TradeSignal signal, Optional<Position> existingPositionOpt) {
+        BigDecimal availableBalance = accountService.getAvailableBalance(QUOTE_ASSET);
+        if (availableBalance.compareTo(BigDecimal.TEN) < 0) {
+            log.warn("가용 잔고({})가 부족하여 주문을 실행할 수 없습니다.", availableBalance);
+            return;
+        }
+
+        BigDecimal investmentAmount = availableBalance.multiply(signal.amount());
+        BigDecimal quantity = investmentAmount.divide(signal.price(), 3, RoundingMode.DOWN);
+        log.info("주문 수량 계산 완료: 잔고 {} USDT * 비율 {}% = {} USDT / 현재가 {} = {}개",
+                availableBalance.setScale(2, RoundingMode.DOWN),
+                signal.amount().multiply(BigDecimal.valueOf(100)),
+                investmentAmount.setScale(2, RoundingMode.DOWN),
+                signal.price(),
+                quantity);
+
+        if (quantity.compareTo(BigDecimal.ZERO) == 0) {
+            log.warn("계산된 주문 수량이 0이므로 주문을 실행하지 않습니다.");
+            return;
+        }
+
+        Position.PositionSide targetSide = (signal.type() == TradeSignal.SignalType.LONG) ? Position.PositionSide.LONG : Position.PositionSide.SHORT;
+
+        if (existingPositionOpt.isPresent() && existingPositionOpt.get().getSide() == targetSide) {
+            String cancelResponse = binanceClient.cancelAllOpenOrders(signal.symbol());
+            log.info("DCA를 위해 기존 OCO 주문을 취소했습니다: {}", cancelResponse);
+        }
+
+        String side = (targetSide == Position.PositionSide.LONG) ? "BUY" : "SELL";
+        eventPublisher.publishEvent(new PlaceOrderEvent(signal.symbol(), side, "MARKET", quantity, null));
+        log.info("시장가 주문 실행 이벤트 발행: {} {} {}", side, quantity, signal.symbol());
     }
 
     /**
@@ -128,22 +138,34 @@ public class PositionService {
 
         Optional<Position> existingPositionOpt = positionRepository.findBySymbolAndStatus(event.symbol(), Position.PositionStatus.OPEN);
 
-        Position positionToSave;
-        if (existingPositionOpt.isPresent() && existingPositionOpt.get().getSide() == event.side()) {
-            // 물타기 로직: 평균 단가 및 수량 재계산
+        if (existingPositionOpt.isPresent()) {
             Position existing = existingPositionOpt.get();
-            BigDecimal oldTotalValue = existing.getEntryPrice().multiply(existing.getAmount());
-            BigDecimal addedValue = event.avgPrice().multiply(event.filledQty());
-            BigDecimal newTotalAmount = existing.getAmount().add(event.filledQty());
-            BigDecimal newAvgPrice = oldTotalValue.add(addedValue).divide(newTotalAmount, 8, RoundingMode.HALF_UP);
-            int newDcaCount = existing.getDcaCount() + 1;
+            // 포지션 청산 로직 (반대 방향 주문 체결 시)
+            if (existing.getSide() != event.side()) {
+                existing.close();
+                log.info("포지션 청산 완료: {}", existing);
+                // OCO 주문 설정을 위한 이벤트를 발행하지 않음
+                positionRepository.save(existing);
+            }
+            // 물타기 로직 (같은 방향 주문 체결 시)
+            else {
+                BigDecimal oldTotalValue = existing.getEntryPrice().multiply(existing.getAmount());
+                BigDecimal addedValue = event.avgPrice().multiply(event.filledQty());
+                BigDecimal newTotalAmount = existing.getAmount().add(event.filledQty());
+                BigDecimal newAvgPrice = oldTotalValue.add(addedValue).divide(newTotalAmount, 8, RoundingMode.HALF_UP);
+                int newDcaCount = existing.getDcaCount() + 1;
 
-            existing.updateDca(newAvgPrice, newTotalAmount, newDcaCount);
-            positionToSave = existing;
-            log.info("DCA 처리 완료. 포지션 정보 업데이트: {}", positionToSave);
-        } else {
-            // 신규 진입 로직
-            positionToSave = Position.builder()
+                existing.updateDca(newAvgPrice, newTotalAmount, newDcaCount);
+                log.info("DCA 처리 완료. 포지션 정보 업데이트: {}", existing);
+
+                Position savedPosition = positionRepository.save(existing);
+                eventPublisher.publishEvent(new PositionChangedEvent(savedPosition));
+                log.info("포지션 변경 이벤트 발행. OCO 주문 설정이 요청됩니다.");
+            }
+        }
+        // 신규 진입 로직
+        else {
+            Position newPosition = Position.builder()
                     .symbol(event.symbol())
                     .side(event.side())
                     .entryPrice(event.avgPrice())
@@ -151,13 +173,11 @@ public class PositionService {
                     .leverage(1)
                     .dcaCount(1)
                     .build();
-            log.info("신규 포지션 생성: {}", positionToSave);
+            log.info("신규 포지션 생성: {}", newPosition);
+
+            Position savedPosition = positionRepository.save(newPosition);
+            eventPublisher.publishEvent(new PositionChangedEvent(savedPosition));
+            log.info("포지션 변경 이벤트 발행. OCO 주문 설정이 요청됩니다.");
         }
-
-        Position savedPosition = positionRepository.save(positionToSave);
-
-        // 포지션 상태 변경이 완료되었음을 알리는 이벤트를 발행하여 OCO 주문 설정을 요청합니다.
-        eventPublisher.publishEvent(new PositionChangedEvent(savedPosition));
-        log.info("포지션 변경 이벤트 발행. OCO 주문 설정이 요청됩니다.");
     }
 }
