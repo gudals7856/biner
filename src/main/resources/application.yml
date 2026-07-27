@@ -47,6 +47,7 @@ trading:
     take-profit-percent: 0.04 # 익절 4%
   general:
     max-bar-count: 200
+    leverage: 1 # 원하는 레버리지 배율로 수정 (예: 5배)
   ichimoku:
     tenkan-sen-period: 9
     kijun-sen-period: 26

@@ -62,5 +62,6 @@ public class TradingProperties {
     @Setter
     public static class General {
         private int maxBarCount = 200;
+        private int leverage = 1; // 레버리지 배율 (기본값 1)
     }
 }

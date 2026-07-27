@@ -1,6 +1,7 @@
 package com.biner.order.service;
 
 import com.biner.account.service.AccountService;
+import com.biner.common.config.TradingProperties;
 import com.biner.order.client.BinanceFuturesClient;
 import com.biner.order.domain.Position;
 import com.biner.order.event.OrderFilledEvent;
@@ -10,7 +11,6 @@ import com.biner.order.repository.PositionRepository;
 import com.biner.strategy.domain.TradeSignal;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
@@ -37,9 +37,7 @@ public class PositionService {
     private final BinanceFuturesClient binanceClient;
     private final ApplicationEventPublisher eventPublisher;
     private final AccountService accountService; // 계좌 정보 조회를 위한 서비스
-
-    @Value("${trading.dca.max-count:4}")
-    private int maxDcaCount;
+    private final TradingProperties tradingProperties; // 외부 설정 주입
 
     private static final String QUOTE_ASSET = "USDT"; // 견적 자산 (주문 수량 계산 기준)
 
@@ -104,6 +102,16 @@ public class PositionService {
     }
 
     private void handleEntryOrDcaSignal(TradeSignal signal, Optional<Position> existingPositionOpt) {
+        // 신규 진입 시에만 레버리지를 설정합니다.
+        if (existingPositionOpt.isEmpty()) {
+            try {
+                binanceClient.setLeverage(signal.symbol(), tradingProperties.getGeneral().getLeverage());
+            } catch (Exception e) {
+                log.error("[{}] 심볼의 레버리지 설정에 실패했습니다. 주문을 진행하지 않습니다.", signal.symbol(), e);
+                return;
+            }
+        }
+
         BigDecimal availableBalance = accountService.getAvailableBalance(QUOTE_ASSET);
         if (availableBalance.compareTo(BigDecimal.TEN) < 0) {
             log.warn("가용 잔고({})가 부족하여 주문을 실행할 수 없습니다.", availableBalance);
@@ -164,7 +172,7 @@ public class PositionService {
                 BigDecimal newAvgPrice = oldTotalValue.add(addedValue).divide(newTotalAmount, 8, RoundingMode.HALF_UP);
                 int newDcaCount = existing.getDcaCount() + 1;
 
-                existing.updateDca(newAvgPrice, newTotalAmount, newDcaCount, maxDcaCount);
+                existing.updateDca(newAvgPrice, newTotalAmount, newDcaCount, tradingProperties.getDca().getMaxCount());
                 log.info("DCA 처리 완료. 포지션 정보 업데이트: {}", existing);
 
                 Position savedPosition = positionRepository.save(existing);
@@ -179,7 +187,7 @@ public class PositionService {
                     .side(event.side())
                     .entryPrice(event.avgPrice())
                     .amount(event.filledQty())
-                    .leverage(1)
+                    .leverage(tradingProperties.getGeneral().getLeverage())
                     .dcaCount(1)
                     .build();
             log.info("신규 포지션 생성: {}", newPosition);

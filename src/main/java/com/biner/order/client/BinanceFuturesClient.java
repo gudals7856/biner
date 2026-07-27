@@ -40,6 +40,31 @@ public class BinanceFuturesClient {
     }
 
     /**
+     * 특정 심볼의 레버리지 배율을 설정합니다.
+     * @param symbol 심볼 (예: "BTCUSDT")
+     * @param leverage 레버리지 배율 (1 ~ 125)
+     * @return API 응답 문자열
+     */
+    @RateLimiter(name = "binanceApi")
+    @CircuitBreaker(name = "binanceApi")
+    @Retry(name = "binanceApi")
+    public String setLeverage(String symbol, int leverage) {
+        long timestamp = Instant.now().toEpochMilli();
+        String queryString = String.format("symbol=%s&leverage=%d&timestamp=%d", symbol, leverage, timestamp);
+        String signature = generateSignature(queryString, apiSecret);
+        queryString += "&signature=" + signature;
+
+        log.info("레버리지 설정 요청: {} {}x", symbol, leverage);
+
+        return webClient.post()
+                .uri(baseUrl + "/fapi/v1/leverage?" + queryString)
+                .header("X-MBX-APIKEY", apiKey)
+                .retrieve()
+                .bodyToMono(String.class)
+                .block();
+    }
+
+    /**
      * 바이낸스 계좌의 자산 정보를 조회합니다.
      * @return 계좌 정보 응답 객체
      */
