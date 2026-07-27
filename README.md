@@ -88,14 +88,13 @@ subgraph "외부 (Binance)"
 end
 
 %% 데이터 흐름 정의
-G[1. 캔들 데이터] --> B
-B -- "2. 매매 신호 발행" --> C
-C -- "3. 주문 이벤트 발행" --> D
-D -- "4. API 호출 (주문 실행)" --> E
-F -- "5. 실시간 체결 정보 수신" --> A
-A -- "6. 체결 이벤트 발행 <br/> (단일 진실 공급원)" --> C
-C -- "7. DB 상태 업데이트 후 <br/> 포지션 변경 이벤트 발행" --> D
-D -- "8. API 호출 (OCO 설정)" --> E
+G[1. 캔들 데이터 수신] --> B
+B -- "2. TradeSignal 발행<br/>(매수/매도/물타기 신호)" --> C
+C -- "3. PlaceOrderEvent 발행<br/>(주문 수량 계산 완료)" --> D
+D -- "4. REST API 호출<br/>(시장가 주문, OCO 주문 설정)" --> E
+F -- "5. 실시간 체결 정보 수신<br/>(ORDER_TRADE_UPDATE)" --> A
+A -- "6. OrderFilledEvent 발행<br/>(<b>단일 진실 공급원</b>)" --> C
+C -- "7. DB 상태 업데이트 후<br/>PositionChangedEvent 발행" --> D
 
 %% 스타일링
 style A fill:#e6f3ff,stroke:#0066cc
@@ -104,4 +103,41 @@ style C fill:#e6f3ff,stroke:#0066cc
 style D fill:#e6f3ff,stroke:#0066cc
 style E fill:#fff0e6,stroke:#ff6600
 style F fill:#fff0e6,stroke:#ff6600
+```
+### 매매 전략 상세 흐름도
+
+``` mermaid
+graph TD
+    A[캔들 마감] --> B{포지션 보유?};
+    B -- NO --> C[<b>신규 진입</b>];
+    B -- YES --> D[<b>기존 포지션 관리</b>];
+    
+subgraph "신규 진입 로직"
+    C --> C1{"상승 추세인가?<br/>(전환선 >= 기준선)"};
+    C1 -- NO --> X[무시];
+    C1 -- YES --> C2{"눌림목 점수 >= 2?<br/>(MACD 골든크로스, RSI 과매도, BB 하단 터치)"};
+    C2 -- NO --> X;
+    C2 -- YES --> C3["✅ <b>신규 매수</b> 신호 발행"];
+end
+
+subgraph "기존 포지션 관리"
+    D --> D1{"<b style='color:red'>비상 상황인가?</b><br/>(isMaxDcaReached == true)"};
+    D1 -- YES --> D2{"<b style='color:green'>본전 탈출 가능한가?</b><br/>(현재가 >= 평단가)"};
+    D1 -- NO --> D4{"수익 상태인가?<br/>(현재가 > 평단가)"};
+    
+    D2 -- YES --> D3["🚨 <b>전량 매도</b> 신호 발행<br/>(본전 탈출)"];
+    D2 -- NO --> Y[대기];
+
+    D4 -- YES --> D5{"전략적 익절 조건?<br/>(RSI 과매수 또는 BB 상단 터치)"};
+    D4 -- NO --> D7{"전략적 손절 조건?<br/>(MACD 데드크로스 또는 기준선 이탈)"};
+
+    D5 -- YES --> D6["💰 <b>전량 매도</b> 신호 발행<br/>(익절)"];
+    D5 -- NO --> Y;
+    
+    D7 -- YES --> D6;
+    D7 -- NO --> D8{"물타기 조건?<br/>(가격 하락 & RSI 과매도 & BB 하단 터치)"};
+
+    D8 -- YES --> D9["💧 <b>추가 매수</b> 신호 발행<br/>(물타기)"];
+    D8 -- NO --> Y;
+end
 ```
