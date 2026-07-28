@@ -1,10 +1,9 @@
 package com.biner.strategy.engine;
 
-import com.biner.backtest.engine.MockExecutionService;
 import com.biner.common.config.TradingProperties;
 import com.biner.market.event.CandleClosedEvent;
 import com.biner.order.domain.Position;
-import com.biner.order.repository.PositionRepository;
+import com.biner.order.service.PositionProvider;
 import com.biner.strategy.domain.TradeSignal;
 import com.biner.strategy.indicator.bollinger.BollingerStrategyFactory;
 import com.biner.strategy.indicator.bollinger.BollingerTouchStrategy;
@@ -30,6 +29,7 @@ import org.ta4j.core.indicators.statistics.StandardDeviationIndicator;
 import org.ta4j.core.num.Num;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -44,10 +44,9 @@ import java.util.concurrent.ConcurrentHashMap;
 public class StrategyEngine {
 
     private final ApplicationEventPublisher eventPublisher;
-    private final PositionRepository positionRepository;
+    private final PositionProvider positionProvider; // 환경에 맞는 구현체가 주입됩니다.
     private final BollingerStrategyFactory bollingerStrategyFactory;
-    private final MockExecutionService mockExecutionService; // 백테스트를 위해 추가
-    private final TradingProperties tradingProperties; // 외부 설정 주입
+    private final TradingProperties tradingProperties;
 
     // 심볼(코인)별 캔들 데이터(BarSeries)를 저장하는 맵. 동시성 문제 방지를 위해 ConcurrentHashMap 사용.
     private final Map<String, BarSeries> seriesMap = new ConcurrentHashMap<>();
@@ -87,9 +86,7 @@ public class StrategyEngine {
     private void analyzeAndEmitSignal(String symbol, BarSeries series, CandleClosedEvent currentCandle) {
         // 백테스트 모드인 경우 MockExecutionService의 가상 포지션을 가져오고,
         // 실시간 모드인 경우 DB에서 실제 포지션을 가져옵니다.
-        Optional<Position> activePositionOpt = symbol.contains("BACKTEST")
-                ? mockExecutionService.getCurrentPosition()
-                : positionRepository.findBySymbolAndStatus(symbol, Position.PositionStatus.OPEN);
+        Optional<Position> activePositionOpt = positionProvider.findOpenPosition(symbol);
 
         if (activePositionOpt.isPresent()) {
             handleExistingPosition(activePositionOpt.get(), series, currentCandle); // 포지션 보유 중 -> 물타기 검토
@@ -141,6 +138,13 @@ public class StrategyEngine {
      * 보유 중인 포지션에 대해 익절, 손절, 또는 물타기(DCA)를 결정합니다.
      */
     private void handleExistingPosition(Position position, BarSeries series, CandleClosedEvent currentCandle) {
+        // 백테스트 모드인 경우 OCO 주문체결 체크 로직 강제 실행
+        if (position.getSymbol().contains("BACKTEST")) {
+            if (checkForMockOcoExit(position, currentCandle)) {
+                return;
+            }
+        }
+
         // 0. (최우선) 최대 물타기 횟수에 도달한 경우, 본전 탈출을 최우선으로 시도합니다.
         if (position.isMaxDcaReached()) {
             if (currentCandle.close().compareTo(position.getEntryPrice()) >= 0) {
@@ -158,6 +162,28 @@ public class StrategyEngine {
 
         // 2. 청산 신호가 없다면, 물타기(DCA) 조건을 검토합니다.
         checkForDcaSignal(position, series, currentCandle);
+    }
+
+
+    private boolean checkForMockOcoExit(Position position, CandleClosedEvent candle) {
+        BigDecimal entryPrice = position.getEntryPrice();
+        BigDecimal low = candle.low();
+        BigDecimal high = candle.high();
+
+        if (position.getSide() == Position.PositionSide.LONG) {
+            BigDecimal stopLossPrice = entryPrice.multiply(BigDecimal.ONE.subtract(tradingProperties.getRiskManagement().getStopLossPercent()));
+            BigDecimal takeProfitPrice = entryPrice.multiply(BigDecimal.ONE.add(tradingProperties.getRiskManagement().getTakeProfitPercent()));
+
+            if (low.compareTo(stopLossPrice) <= 0) {
+                createAndPublishExitSignal(position, stopLossPrice, "Hard Stop-Loss");
+                return true;
+            }
+            if (high.compareTo(takeProfitPrice) >= 0) {
+                createAndPublishExitSignal(position, takeProfitPrice, "Hard Take-Profit");
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -210,9 +236,7 @@ public class StrategyEngine {
             return;
         }
         
-        int dcaCount = position.getSymbol().contains("BACKTEST")
-                ? mockExecutionService.getDcaCount()
-                : position.getDcaCount();
+        int dcaCount = position.getDcaCount();
 
         BigDecimal currentPrice = currentCandle.close();
         BigDecimal avgEntryPrice = position.getEntryPrice();
@@ -365,9 +389,6 @@ public class StrategyEngine {
         Num upperBandNum = bbUpper.getValue(series.getEndIndex());
         BigDecimal upperBandValue = new BigDecimal(upperBandNum.toString());
 
-        BigDecimal currentClose = currentCandle.close();
-        BigDecimal currentHigh = currentCandle.high();
-
-        return currentClose.compareTo(upperBandValue) >= 0 || currentHigh.compareTo(upperBandValue) >= 0;
+        return currentCandle.close().compareTo(upperBandValue) >= 0 || currentCandle.high().compareTo(upperBandValue) >= 0;
     }
 }

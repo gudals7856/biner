@@ -13,12 +13,20 @@ import java.math.BigDecimal;
 @Setter
 public class TradingProperties {
 
+    private RiskManagement riskManagement = new RiskManagement();
     private Ichimoku ichimoku = new Ichimoku();
     private Macd macd = new Macd();
     private Rsi rsi = new Rsi();
     private Bollinger bollinger = new Bollinger();
     private Dca dca = new Dca();
     private General general = new General();
+
+    @Getter
+    @Setter
+    public static class RiskManagement {
+        private BigDecimal stopLossPercent = new BigDecimal("0.02");
+        private BigDecimal takeProfitPercent = new BigDecimal("0.04");
+    }
 
     @Getter
     @Setter
