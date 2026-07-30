@@ -64,6 +64,10 @@ dependencies {
     // 7. Test
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'io.projectreactor:reactor-test'
+
+    // 엑셀 파일을 읽기 위한 의존성 추가
+    implementation 'org.apache.poi:poi:5.2.5'
+    implementation 'org.apache.poi:poi-ooxml:5.2.5'
 }
 
 tasks.named('test') {
