@@ -9,6 +9,7 @@ import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -20,6 +21,7 @@ import java.math.BigDecimal;
  */
 @Slf4j
 @Service
+@Profile("!backtest & !dataloader") // 'backtest' 또는 'dataloader' 프로필이 아닐 때만 활성화
 @RequiredArgsConstructor
 public class BinanceUserDataStreamListener {
 
