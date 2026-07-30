@@ -1,5 +1,6 @@
 package com.biner.backtest;
 
+import com.biner.backtest.engine.MockExecutionService;
 import com.biner.backtest.engine.ReplayEngine;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,6 +22,7 @@ import java.time.Instant;
 public class BacktestRunner implements CommandLineRunner {
 
     private final ReplayEngine replayEngine;
+    private final MockExecutionService mockExecutionService;
 
     // application.yml 파일에서 백테스트 설정을 주입받습니다.
     @Value("${backtest.symbol}")
@@ -42,14 +44,20 @@ public class BacktestRunner implements CommandLineRunner {
         log.info("심볼: {}, 시간봉: {}, 시작: {}, 종료: {}", symbol, timeframe, startTime, endTime);
         log.info("==================================================");
 
-        // 설정 파일의 시간 문자열을 Instant 객체로 변환합니다.
+        // 1. 백테스트 시작 전, 모의 체결 서비스를 초기화합니다.
+        mockExecutionService.reset();
+
+        // 2. 설정 파일의 시간 문자열을 Instant 객체로 변환합니다.
         Instant start = Instant.parse(startTime);
         Instant end = Instant.parse(endTime);
 
-        // ReplayEngine을 사용하여 백테스트를 실행합니다.
+        // 3. ReplayEngine을 사용하여 백테스트를 실행합니다.
         replayEngine.runBacktest(symbol, timeframe, start, end);
 
-        // 백테스트 완료 후 애플리케이션을 종료합니다.
+        // 4. 모든 리플레이가 끝난 후, 최종 결과 리포트를 출력합니다.
+        mockExecutionService.printReport();
+
+        // 5. 백테스트 완료 후 애플리케이션을 종료합니다.
         System.exit(0);
     }
 }
