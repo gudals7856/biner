@@ -161,7 +161,7 @@ public class StrategyEngine {
         }
 
         // 2. 청산 신호가 없다면, 물타기(DCA) 조건을 검토합니다.
-        checkForDcaSignal(position, series, currentCandle);
+        // checkForDcaSignal(position, series, currentCandle); // 물타기 기능 비활성화
     }
 
 
