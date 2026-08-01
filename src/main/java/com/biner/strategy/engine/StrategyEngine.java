@@ -129,7 +129,7 @@ public class StrategyEngine {
               tradingProperties.getDca().getBaseEntryPercent(),
               "신규 LONG 진입 신호 (Score: " + score + ")"
             );
-            log.info("🚀 매수 신호 발생: {}", signal);
+            log.debug("🚀 매수 신호 발생: {}", signal);
             eventPublisher.publishEvent(signal);
         }
     }
@@ -148,7 +148,7 @@ public class StrategyEngine {
         // 0. (최우선) 최대 물타기 횟수에 도달한 경우, 본전 탈출을 최우선으로 시도합니다.
         if (position.isMaxDcaReached()) {
             if (currentCandle.close().compareTo(position.getEntryPrice()) >= 0) {
-                log.info("🚨 최대 물타기 포지션 본전 탈출 조건 충족!");
+                log.debug("🚨 최대 물타기 포지션 본전 탈출 조건 충족!");
                 createAndPublishExitSignal(position, currentCandle.close(), "본전 탈출: 최대 물타기 도달");
                 return;
             }
@@ -209,21 +209,21 @@ public class StrategyEngine {
                 return true;
             }
         }
-        // 현재가가 평단가보다 낮은 경우, 손절 조건만 확인
-        else if (currentPrice.compareTo(entryPrice) < 0) {
-            // ================== 손절(Stop-Loss) 로직 ==================
-            // 전략 1: MACD 데드크로스 발생 시 손절 (추천)
-            if (isMacdDeadCross(series)) {
-                createAndPublishExitSignal(position, currentPrice, "손절: MACD 데드크로스");
-                return true;
-            }
-
-            // 전략 2: 가격이 기준선(Kijun-sen) 아래로 마감될 때 손절 (강력 추천 - 트레일링 스탑)
-            if (isPriceBelowKijunSen(series)) {
-                createAndPublishExitSignal(position, currentPrice, "손절: 기준선 하향 이탈");
-                return true;
-            }
-        }
+//        // 현재가가 평단가보다 낮은 경우, 손절 조건만 확인
+//        else if (currentPrice.compareTo(entryPrice) < 0) {
+//            // ================== 손절(Stop-Loss) 로직 ==================
+//            // 전략 1: MACD 데드크로스 발생 시 손절 (추천)
+//            if (isMacdDeadCross(series)) {
+//                createAndPublishExitSignal(position, currentPrice, "손절: MACD 데드크로스");
+//                return true;
+//            }
+//
+//            // 전략 2: 가격이 기준선(Kijun-sen) 아래로 마감될 때 손절 (강력 추천 - 트레일링 스탑)
+//            if (isPriceBelowKijunSen(series)) {
+//                createAndPublishExitSignal(position, currentPrice, "손절: 기준선 하향 이탈");
+//                return true;
+//            }
+//        }
         return false;
     }
 
@@ -263,7 +263,7 @@ public class StrategyEngine {
                     tradingProperties.getDca().getBaseEntryPercent(),
                     "DCA(물타기) 신호"
                 );
-                log.info("💧 물타기 신호 발생. 현재 DCA 횟수: {}/{}", dcaCount, tradingProperties.getDca().getMaxCount());
+                log.debug("💧 물타기 신호 발생. 현재 DCA 횟수: {}/{}", dcaCount, tradingProperties.getDca().getMaxCount());
                 eventPublisher.publishEvent(dcaSignal);
             }
         }
@@ -284,7 +284,7 @@ public class StrategyEngine {
                 BigDecimal.ONE, // 포지션 전체(100%)를 청산
                 reason
         );
-        log.info("🔔 포지션 청산 신호 발생: {}", exitSignal);
+        log.debug("🔔 포지션 청산 신호 발생: {}", exitSignal);
         eventPublisher.publishEvent(exitSignal);
     }
 
