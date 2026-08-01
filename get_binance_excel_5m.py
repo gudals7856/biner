@@ -3,7 +3,7 @@ import pandas as pd
 import time
 from datetime import datetime
 
-def fetch_all_klines_since(symbol='BTC/USDT', timeframe='5m', start_date='2026-01-01 00:00:00'):
+def fetch_all_klines_since(symbol='BTC/USDT', timeframe='5m', start_date='2025-01-01 00:00:00'):
     print(f"{symbol} {timeframe} 데이터를 {start_date} 부터 현재까지 수집합니다.")
     
     binance = ccxt.binance()
@@ -59,4 +59,4 @@ def fetch_all_klines_since(symbol='BTC/USDT', timeframe='5m', start_date='2026-0
     print(f"완료! 현재 폴더에 '{filename}' 파일이 저장되었습니다.")
 
 # 실행: 비트코인 5분봉 데이터를 2026-01-01 부터 현재까지 수집
-fetch_all_klines_since(symbol='BTC/USDT', timeframe='5m', start_date='2026-01-01 00:00:00')
+fetch_all_klines_since(symbol='BTC/USDT', timeframe='5m', start_date='2025-01-01 00:00:00')
