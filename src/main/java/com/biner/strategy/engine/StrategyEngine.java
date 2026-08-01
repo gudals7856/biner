@@ -359,7 +359,7 @@ public class StrategyEngine {
 
     /**
      * RSI 지표가 설정된 과매수 구간에서 이탈했는 지 확인합니다.
-     * @return RSI > 70 이면 true (과매수 상태로 간주)
+     * @return RSI가 과매수 기준선을 하향 돌파할 때 true
      */
     private boolean isRsiExitingOverbought(BarSeries series) {
         ClosePriceIndicator closePrice = new ClosePriceIndicator(series);
@@ -397,7 +397,7 @@ public class StrategyEngine {
 
     /**
      * 현재 가격이 볼린저 밴드 상단 밖에서 복귀했는 지 확인합니다.
-     * @return 현재 캔들의 종가 또는 고가가 상단 밴드 값보다 크거나 같으면 true
+     * @return 직전 종가가 볼린저 밴드 상단을 초과했다가, 현재 종가가 상단 이하로 다시 진입(하향 돌파)하면 true
      */
     private boolean isPriceExitingUpperBand(BarSeries series) {
         ClosePriceIndicator closePrice = new ClosePriceIndicator(series);
