@@ -56,7 +56,7 @@ public class StrategyEngine {
      * 이 이벤트는 실시간 WebSocket 또는 백테스트의 ReplayEngine으로부터 발생합니다.
      */
     @EventListener
-    @Transactional(readOnly = true) // DB 변경이 없으므로 readOnly로 성능 최적화
+    @Transactional(readOnly = true)
     public void onCandleClosed(CandleClosedEvent event) {
         String symbol = event.symbol();
 
@@ -197,15 +197,15 @@ public class StrategyEngine {
         // 현재가가 평단가보다 높은 경우, 익절 조건만 확인
         if (currentPrice.compareTo(entryPrice) > 0) {
             // ================== 익절(Take-Profit) 로직 ==================
-            // 전략 1: RSI가 과매수 구간에 진입했을 때 익절 (추천)
-            if (isRsiOverbought(series)) {
-                createAndPublishExitSignal(position, currentPrice, "익절: RSI 과매수");
+            // 전략 1: RSI가 과매수 구간에서 벗어났을 때 익절 (추천)
+            if (isRsiExitingOverbought(series)) {
+                createAndPublishExitSignal(position, currentPrice, "익절: RSI 과매수 이탈");
                 return true;
             }
 
-            // 전략 2: 볼린저 밴드 상단 터치 시 익절
-            if (touchesUpperBand(series, currentCandle)) {
-                createAndPublishExitSignal(position, currentPrice, "익절: 볼린저 밴드 상단 터치");
+            // 전략 2: 볼린저 밴드 상단 밖에서 복귀
+            if (isPriceExitingUpperBand(series)) {
+                createAndPublishExitSignal(position, currentPrice, "익절: 볼린저 밴드 복귀");
                 return true;
             }
         }
@@ -346,13 +346,21 @@ public class StrategyEngine {
     }
 
     /**
-     * RSI 지표가 설정된 과매수 임계값보다 높은지 확인합니다.
+     * RSI 지표가 설정된 과매수 구간에서 이탈했는 지 확인합니다.
      * @return RSI > 70 이면 true (과매수 상태로 간주)
      */
-    private boolean isRsiOverbought(BarSeries series) {
+    private boolean isRsiExitingOverbought(BarSeries series) {
         ClosePriceIndicator closePrice = new ClosePriceIndicator(series);
         RSIIndicator rsi = new RSIIndicator(closePrice, tradingProperties.getRsi().getBarCount());
-        return rsi.getValue(series.getEndIndex()).doubleValue() > tradingProperties.getRsi().getOverboughtThreshold();
+        
+        int currentIndex = series.getEndIndex();
+        if (currentIndex < 1) return false;
+        
+        double prevRsi = rsi.getValue(currentIndex - 1).doubleValue();
+        double currentRsi = rsi.getValue(currentIndex).doubleValue();
+        
+        return prevRsi >= tradingProperties.getRsi().getOverboughtThreshold() && 
+               currentRsi < tradingProperties.getRsi().getOverboughtThreshold();
     }
 
     /**
@@ -376,19 +384,24 @@ public class StrategyEngine {
     }
 
     /**
-     * 현재 가격이 볼린저 밴드 상단을 터치했는지 확인합니다.
+     * 현재 가격이 볼린저 밴드 상단 밖에서 복귀했는 지 확인합니다.
      * @return 현재 캔들의 종가 또는 고가가 상단 밴드 값보다 크거나 같으면 true
      */
-    private boolean touchesUpperBand(BarSeries series, CandleClosedEvent currentCandle) {
+    private boolean isPriceExitingUpperBand(BarSeries series) {
         ClosePriceIndicator closePrice = new ClosePriceIndicator(series);
         SMAIndicator sma = new SMAIndicator(closePrice, tradingProperties.getBollinger().getBarCount());
         BollingerBandsMiddleIndicator bbMiddle = new BollingerBandsMiddleIndicator(sma);
         StandardDeviationIndicator sd = new StandardDeviationIndicator(closePrice, tradingProperties.getBollinger().getBarCount());
         BollingerBandsUpperIndicator bbUpper = new BollingerBandsUpperIndicator(bbMiddle, sd, series.numOf(tradingProperties.getBollinger().getDeviationMultiplier()));
 
-        Num upperBandNum = bbUpper.getValue(series.getEndIndex());
-        BigDecimal upperBandValue = new BigDecimal(upperBandNum.toString());
+        int currentIndex = series.getEndIndex();
+        if (currentIndex < 1) return false;
 
-        return currentCandle.close().compareTo(upperBandValue) >= 0 || currentCandle.high().compareTo(upperBandValue) >= 0;
+        Num prevClose = series.getBar(currentIndex - 1).getClosePrice();
+        Num currentClose = series.getBar(currentIndex).getClosePrice();
+        Num prevUpperBand = bbUpper.getValue(currentIndex - 1);
+        Num currentUpperBand = bbUpper.getValue(currentIndex);
+
+        return prevClose.isGreaterThan(prevUpperBand) && currentClose.isLessThanOrEqual(currentUpperBand);
     }
 }
