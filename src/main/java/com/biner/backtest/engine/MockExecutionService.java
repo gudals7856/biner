@@ -75,7 +75,7 @@ public class MockExecutionService {
         // 청산 신호 처리
         if (signal.type() == TradeSignal.SignalType.CLOSE_LONG || signal.type() == TradeSignal.SignalType.CLOSE_SHORT) {
             if (currentPosition != null) {
-                log.info("[가상] OCO 주문 취소 로직을 건너뜁니다 (해당 없음).");
+                log.debug("[가상] OCO 주문 취소 로직을 건너뜁니다 (해당 없음).");
                 closePosition(signal.price(), signal.reason());
             }
         }
@@ -83,12 +83,12 @@ public class MockExecutionService {
         else {
             // 물타기 시나리오
             if (currentPosition != null && currentPosition.getSide().toString().equals(signal.type().toString())) {
-                log.info("[가상] DCA를 위한 OCO 주문 취소 로직을 건너뜁니다 (해당 없음).");
+                log.debug("[가상] DCA를 위한 OCO 주문 취소 로직을 건너뜁니다 (해당 없음).");
                 handleDca(signal);
             }
             // 신규 진입 시나리오
             else if (currentPosition == null) {
-                log.info("[가상] 레버리지 설정 로직을 건너뜁니다 (해당 없음).");
+                log.debug("[가상] 레버리지 설정 로직을 건너뜁니다 (해당 없음).");
                 openPosition(signal);
             }
         }
