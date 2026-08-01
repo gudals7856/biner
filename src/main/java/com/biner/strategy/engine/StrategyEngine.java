@@ -175,11 +175,11 @@ public class StrategyEngine {
             BigDecimal takeProfitPrice = entryPrice.multiply(BigDecimal.ONE.add(tradingProperties.getRiskManagement().getTakeProfitPercent()));
 
             if (low.compareTo(stopLossPrice) <= 0) {
-                createAndPublishExitSignal(position, stopLossPrice, "Hard Stop-Loss");
+                createAndPublishExitSignal(position, stopLossPrice, "손절: Hard Stop-Loss");
                 return true;
             }
             if (high.compareTo(takeProfitPrice) >= 0) {
-                createAndPublishExitSignal(position, takeProfitPrice, "Hard Take-Profit");
+                createAndPublishExitSignal(position, takeProfitPrice, "익절: Hard Take-Profit");
                 return true;
             }
         }
