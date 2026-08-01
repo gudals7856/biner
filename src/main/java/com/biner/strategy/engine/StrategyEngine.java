@@ -256,14 +256,18 @@ public class StrategyEngine {
             boolean isOversold = isOversold(series);
             boolean touchesLowerBand = touchesLowerBand(series, currentCandle);
             if(isOversold && touchesLowerBand) {
+                // 물타기 횟수가 늘어날수록 비중을 줄입니다. (2차: 1/2, 3차: 1/3, 4차: 1/4)
+                BigDecimal dcaAmount = tradingProperties.getDca().getBaseEntryPercent()
+                        .divide(BigDecimal.valueOf(dcaCount), 8, RoundingMode.HALF_UP);
+
                 TradeSignal dcaSignal = new TradeSignal(
                     position.getSymbol(),
                     TradeSignal.SignalType.LONG,
                     currentPrice,
-                    tradingProperties.getDca().getBaseEntryPercent(),
+                    dcaAmount,
                     "DCA(물타기) 신호"
                 );
-                log.debug("💧 물타기 신호 발생. 현재 DCA 횟수: {}/{}", dcaCount, tradingProperties.getDca().getMaxCount());
+                log.debug("💧 물타기 신호 발생. 현재 DCA 횟수: {}/{}", dcaCount + 1, tradingProperties.getDca().getMaxCount());
                 eventPublisher.publishEvent(dcaSignal);
             }
         }
