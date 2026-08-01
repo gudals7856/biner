@@ -70,9 +70,9 @@ public class StrategyEngine {
         // 2. 새로 도착한 캔들 데이터를 ta4j 형식으로 변환하여 BarSeries에 추가합니다.
         series.addBar(Ta4jConverter.convert(event));
 
-        // 3. 지표 계산에 필요한 최소한의 캔들(50개)이 쌓일 때까지 대기합니다.
-        if (series.getBarCount() < 50) {
-            log.info("캔들 데이터 수집 중... [{}]: {}/50개", symbol, series.getBarCount());
+        // 3. 지표 계산에 필요한 최소한의 캔들(200개)이 쌓일 때까지 대기합니다.
+        if (series.getBarCount() < 200) { // 200 이평선 계산을 위해 최소 200개 캔들 필요
+            log.info("캔들 데이터 수집 중... [{}]: {}/200개", symbol, series.getBarCount());
             return;
         }
 
@@ -297,13 +297,21 @@ public class StrategyEngine {
     // =================================================================
 
     /**
-     * 일목균형표의 전환선과 기준선을 이용하여 현재 추세를 판단합니다.
-     * @return 전환선 >= 기준선 이면 true (상승 추세 또는 횡보)
+     * 일목균형표의 전환선과 기준선, 그리고 장기 이동평균선을 이용하여 현재 추세를 판단합니다.
+     * @return 전환선 >= 기준선 이고, 현재가가 200 이평선 위에 있으면 true (강한 상승 추세)
      */
     private boolean isUptrend(BarSeries series) {
+        // 1. (기존) 단기 추세 확인: 일목균형표 전환선/기준선
         IchimokuTenkanSenIndicator tenkanSen = new IchimokuTenkanSenIndicator(series, tradingProperties.getIchimoku().getTenkanSenPeriod());
         IchimokuKijunSenIndicator kijunSen = new IchimokuKijunSenIndicator(series, tradingProperties.getIchimoku().getKijunSenPeriod());
-        return tenkanSen.getValue(series.getEndIndex()).isGreaterThanOrEqual(kijunSen.getValue(series.getEndIndex()));
+        boolean isShortTermUptrend = tenkanSen.getValue(series.getEndIndex()).isGreaterThanOrEqual(kijunSen.getValue(series.getEndIndex()));
+
+        // 2. (NEW) 장기 추세 필터: 200주기 이동평균선
+        SMAIndicator longTermSma = new SMAIndicator(new ClosePriceIndicator(series), 200);
+        boolean isLongTermUptrend = series.getLastBar().getClosePrice().isGreaterThan(longTermSma.getValue(series.getEndIndex()));
+
+        // 두 조건을 모두 만족해야만 진짜 상승 추세로 인정
+        return isShortTermUptrend && isLongTermUptrend;
     }
 
     /**
