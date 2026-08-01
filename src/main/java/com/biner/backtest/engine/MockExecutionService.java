@@ -96,7 +96,7 @@ public class MockExecutionService {
 
     private void openPosition(TradeSignal signal) {
         BigDecimal executionPrice = applySlippage(signal.price(), signal.type());
-        BigDecimal positionValue = currentBalance.multiply(tradingProperties.getDca().getBaseEntryPercent());
+        BigDecimal positionValue = currentBalance.multiply(signal.amount()); // 신규 진입은 signal.amount() 사용 (보통 고정값)
         BigDecimal fee = positionValue.multiply(feeRate);
         currentBalance = currentBalance.subtract(fee);
 
@@ -121,7 +121,8 @@ public class MockExecutionService {
         }
 
         BigDecimal executionPrice = applySlippage(signal.price(), signal.type());
-        BigDecimal positionValue = currentBalance.multiply(tradingProperties.getDca().getBaseEntryPercent());
+        // [버그 수정] tradingProperties가 아닌, StrategyEngine이 계산해준 signal.amount()를 사용합니다.
+        BigDecimal positionValue = currentBalance.multiply(signal.amount());
         BigDecimal fee = positionValue.multiply(feeRate);
         currentBalance = currentBalance.subtract(fee);
 
@@ -134,7 +135,8 @@ public class MockExecutionService {
 
         dcaCount++;
         currentPosition.updateDca(newAvgPrice, totalAmount, dcaCount, tradingProperties.getDca().getMaxCount());
-        log.info("💧 [가상 DCA {}/{}] 물타기 체결. 새 평균단가: {}, 총 수량: {}", dcaCount, tradingProperties.getDca().getMaxCount(), newAvgPrice, totalAmount);
+        log.info("💧 [가상 DCA {}/{}] 물타기 체결. 체결가: {}, 새 평균단가: {}, 총 수량: {}",
+                dcaCount, tradingProperties.getDca().getMaxCount(), executionPrice.setScale(2, RoundingMode.HALF_UP), newAvgPrice.setScale(2, RoundingMode.HALF_UP), totalAmount);
     }
 
     private void closePosition(BigDecimal price, String reason) {
