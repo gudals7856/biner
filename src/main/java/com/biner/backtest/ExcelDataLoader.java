@@ -38,9 +38,9 @@ public class ExcelDataLoader implements CommandLineRunner {
     private final CandleRepository candleRepository;
 
     // 처리할 엑셀 파일의 경로와 기본 정보
-    private static final String FILE_PATH = "BTCUSDT_1m_since_2026-01-01.xlsx";
+    private static final String FILE_PATH = "BTCUSDT_5m_since_2025-01-01.xlsx";
     private static final String SYMBOL = "BTCUSDT";
-    private static final String TIMEFRAME = "1m";
+    private static final String TIMEFRAME = "5m";
 
     @Override
     public void run(String... args) throws Exception {
@@ -81,7 +81,7 @@ public class ExcelDataLoader implements CommandLineRunner {
                     LocalDateTime ldtKst = LocalDateTime.parse(dateKstStr, formatter);
                     ZonedDateTime zdtKst = ldtKst.atZone(kstZone);
                     Instant openTime = zdtKst.toInstant();
-                    Instant closeTime = openTime.plus(1, ChronoUnit.MINUTES);
+                    Instant closeTime = openTime.plus(5, ChronoUnit.MINUTES);
 
                     // 3. 복합 키 객체 생성
                     CandleId candleId = new CandleId(openTime, SYMBOL, TIMEFRAME);
