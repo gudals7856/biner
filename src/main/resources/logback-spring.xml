@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- Spring Boot의 기본 Logback 설정을 가져옵니다 (컬러 콘솔 등) -->
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+    <!-- 로그 파일 경로를 변수로 지정합니다 -->
+    <property name="LOG_FILE" value="logs/backtest.log"/>
+
+    <!-- 1. 콘솔(Console) Appender 설정 -->
+    <!-- 기존처럼 로그를 콘솔에 계속 출력합니다 -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>${CONSOLE_LOG_PATTERN}</pattern>
+            <charset>utf8</charset>
+        </encoder>
+    </appender>
+
+    <!-- 2. 파일(File) Appender 설정 -->
+    <!-- 로그를 파일로 저장합니다. 파일이 커지거나 날짜가 바뀌면 자동으로 새 파일을 만듭니다. -->
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_FILE}</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <!-- 매일, 또는 파일 크기가 10MB를 넘으면 새 파일을 생성합니다 -->
+            <fileNamePattern>logs/archived/backtest.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+            <timeBasedFileNamingAndTriggeringPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
+                <maxFileSize>10MB</maxFileSize>
+            </timeBasedFileNamingAndTriggeringPolicy>
+            <!-- 최대 30일치 로그만 보관합니다 -->
+            <maxHistory>30</maxHistory>
+        </rollingPolicy>
+        <encoder>
+            <pattern>${FILE_LOG_PATTERN}</pattern>
+            <charset>utf8</charset>
+        </encoder>
+    </appender>
+
+    <!-- 3. 루트(Root) 로거 설정 -->
+    <!-- 기본적으로 모든 로그는 INFO 레벨 이상일 때 콘솔과 파일에 모두 기록됩니다. -->
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="FILE"/>
+    </root>
+
+    <!-- 4. 특정 패키지 로거 설정 (application.yml 설정보다 우선 적용될 수 있음) -->
+    <!-- com.biner 패키지 하위의 로그는 DEBUG 레벨 이상일 때 콘솔과 파일에 모두 기록됩니다. -->
+    <logger name="com.biner" level="DEBUG" additivity="false">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="FILE"/>
+    </logger>
+
+</configuration>
