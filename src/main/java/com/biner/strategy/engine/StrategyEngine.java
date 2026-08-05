@@ -197,11 +197,11 @@ public class StrategyEngine {
         // 현재가가 평단가보다 높은 경우, 익절 조건만 확인
         if (currentPrice.compareTo(entryPrice) > 0) {
             // ================== 익절(Take-Profit) 로직 ==================
-            // 전략 1: RSI가 과매수 구간에서 벗어났을 때 익절 (추천)
-            if (isRsiExitingOverbought(series)) {
-                createAndPublishExitSignal(position, currentPrice, "익절: RSI 과매수 이탈");
-                return true;
-            }
+//            // 전략 1: RSI가 과매수 구간에서 벗어났을 때 익절 (추천)
+//            if (isRsiExitingOverbought(series)) {
+//                createAndPublishExitSignal(position, currentPrice, "익절: RSI 과매수 이탈");
+//                return true;
+//            }
 
             // 전략 2: 볼린저 밴드 상단 밖에서 복귀
             if (isPriceExitingUpperBand(series)) {
