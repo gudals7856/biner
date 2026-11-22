@@ -3,6 +3,7 @@ package com.biner.market.websocket;
 import com.biner.market.event.CandleClosedEvent;
 import com.biner.market.websocket.dto.BinanceKlineMessage;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
@@ -16,85 +17,88 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 import java.time.Instant;
 
 /**
- * 바이낸스 WebSocket으로부터 수신하는 텍스트 메시지를 처리하는 핸들러입니다.
- * TextWebSocketHandler를 상속받아 텍스트 기반의 WebSocket 메시지를 처리합니다.
+ * 바이낸스 kline WebSocket 메시지를 처리하여, 캔들이 마감될 때 CandleClosedEvent를 발행합니다.
+ * 마지막 메시지 수신 시각을 기록하여 MarketWebSocketConfig의 감시 작업이 연결 이상을 감지할 수 있게 합니다.
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class BinanceKlineWebSocketHandler extends TextWebSocketHandler {
 
-    // 애플리케이션 이벤트를 발행하기 위한 퍼블리셔
-    private final ApplicationEventPublisher eventPublisher;
+  private final ApplicationEventPublisher eventPublisher;
+  private final ObjectMapper objectMapper;
 
-    // JSON 문자열을 Java 객체로 변환하기 위한 ObjectMapper
-    private final ObjectMapper objectMapper;
+  /** 구독 시간봉 (MarketWebSocketConfig에서 설정) */
+  @Setter
+  private String klineInterval;
 
-    // MarketWebSocketConfig에서 설정할 구독 시간봉(interval)
-    @Setter
-    private String klineInterval;
+  /** 마지막 메시지 수신 시각 */
+  @Getter
+  private volatile Instant lastMessageAt = Instant.EPOCH;
 
-    /**
-     * WebSocket 서버로부터 텍스트 메시지를 수신했을 때 호출되는 메서드입니다.
-     * @param session 현재 WebSocket 세션
-     * @param message 수신된 텍스트 메시지
-     */
-    @Override
-    protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-        try {
-            // 디버그 레벨이 활성화된 경우에만 수신된 원본 메시지를 로그로 남깁니다. (성능 저하 방지)
-            if (log.isDebugEnabled()) {
-                log.debug("🔥 [LIVE DATA] {}", message.getPayload());
-            }
+  /** 마지막으로 발행한 캔들의 시작 시각 (중복 발행 방지) */
+  private volatile Instant lastPublishedOpenTime = Instant.EPOCH;
 
-            // 수신된 JSON 문자열을 BinanceKlineMessage DTO 객체로 변환(파싱)합니다.
-            BinanceKlineMessage klineMessage = objectMapper.readValue(message.getPayload(), BinanceKlineMessage.class);
+  @Override
+  protected void handleTextMessage(WebSocketSession session, TextMessage message) {
+    lastMessageAt = Instant.now();
+    try {
+      if (log.isTraceEnabled()) {
+        log.trace("[LIVE DATA] {}", message.getPayload());
+      }
 
-            // 메시지와 내부 kline 데이터가 정상적으로 파싱되었는지 확인합니다.
-            if (klineMessage != null && klineMessage.kline() != null) {
-                BinanceKlineMessage.KlineData klineData = klineMessage.kline();
+      BinanceKlineMessage klineMessage = objectMapper.readValue(message.getPayload(), BinanceKlineMessage.class);
+      if (klineMessage == null || klineMessage.kline() == null) {
+        return;
+      }
+      BinanceKlineMessage.KlineData k = klineMessage.kline();
+      if (!klineInterval.equals(k.interval()) || !k.isFinal()) {
+        return;
+      }
 
-                // 외부에서 주입받은 klineInterval 값과 비교합니다.
-                // 또한, 캔들이 마감(isFinal=true)되었을 때만 이벤트를 발행합니다.
-                if (klineInterval.equals(klineData.interval()) && klineData.isFinal()) {
-                    CandleClosedEvent event = new CandleClosedEvent(
-                            klineData.symbol(),
-                            Instant.ofEpochMilli(klineData.startTime()), // 타임스탬프를 Instant 객체로 변환
-                            Instant.ofEpochMilli(klineData.closeTime()),
-                            klineData.open(),
-                            klineData.high(),
-                            klineData.low(),
-                            klineData.close(),
-                            klineData.volume(),
-                            klineData.interval()
-                    );
+      Instant openTime = Instant.ofEpochMilli(k.startTime());
+      if (!openTime.isAfter(lastPublishedOpenTime)) {
+        log.debug("이미 처리한 캔들입니다. 무시합니다: {}", openTime);
+        return;
+      }
+      lastPublishedOpenTime = openTime;
 
-                    log.info("🎯 {} 캔들 마감 이벤트 발행. 심볼: {}, 종가: {}", klineInterval, event.symbol(), event.close());
-                    eventPublisher.publishEvent(event);
-                }
-            }
-        } catch (Exception e) {
-            // 메시지 처리 중 예외가 발생하면 경고 로그를 남깁니다.
-            log.warn("메시지 처리 실패: {}", message.getPayload(), e);
-        }
+      CandleClosedEvent event = new CandleClosedEvent(
+        k.symbol(),
+        openTime,
+        Instant.ofEpochMilli(k.closeTime()),
+        k.open(),
+        k.high(),
+        k.low(),
+        k.close(),
+        k.volume(),
+        k.interval()
+      );
+      log.info("{} 캔들 마감 이벤트 발행. 심볼: {}, 종가: {}", klineInterval, event.symbol(), event.close());
+      eventPublisher.publishEvent(event);
+    } catch (Exception e) {
+      log.warn("메시지 처리 실패: {}", message.getPayload(), e);
     }
+  }
 
-    /**
-     * WebSocket 연결이 성공적으로 수립되었을 때 호출됩니다.
-     * @param session 연결된 세션 정보
-     */
-    @Override
-    public void afterConnectionEstablished(WebSocketSession session) {
-        log.info("✅ 바이낸스 WebSocket 연결 성공 (세션 ID: {})", session.getId());
-    }
+  /** 워밍업 캔들 이후부터 실시간 캔들을 받도록 기준 시각을 설정합니다. */
+  public void markPublishedUntil(Instant openTime) {
+    lastPublishedOpenTime = openTime;
+  }
 
-    /**
-     * WebSocket 연결이 종료되었을 때 호출됩니다.
-     * @param session 종료된 세션 정보
-     * @param status 종료 상태 (코드, 원인 등)
-     */
-    @Override
-    public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
-        log.warn("❌ 바이낸스 WebSocket 연결 끊김: 세션 ID {}, 상태: {}", session.getId(), status);
-    }
+  @Override
+  public void afterConnectionEstablished(WebSocketSession session) {
+    lastMessageAt = Instant.now();
+    log.info("바이낸스 kline WebSocket 연결 성공 (세션 ID: {})", session.getId());
+  }
+
+  @Override
+  public void handleTransportError(WebSocketSession session, Throwable exception) {
+    log.error("바이낸스 kline WebSocket 전송 오류 (세션 ID: {})", session.getId(), exception);
+  }
+
+  @Override
+  public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
+    log.warn("바이낸스 kline WebSocket 연결 끊김: 세션 ID {}, 상태: {}. 감시 작업이 재연결합니다.", session.getId(), status);
+  }
 }

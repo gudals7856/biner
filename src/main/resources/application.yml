@@ -6,9 +6,10 @@ spring:
   application:
     name: biner
   datasource:
-    url: jdbc:postgresql://localhost:5432/trading_db
-    username: biner
-    password: local_password
+    # 접속 정보는 환경변수로 주입합니다. (.env.example 참고, 비밀번호는 코드/설정 파일에 두지 않습니다)
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/trading_db}
+    username: ${DB_USERNAME:biner}
+    password: ${DB_PASSWORD}
   jpa:
     hibernate:
       # [중요] Flyway가 DB 스키마를 전적으로 관리하도록, Hibernate의 자동 DDL 생성 기능을 끕니다.
@@ -22,8 +23,8 @@ spring:
     baseline-on-migrate: true # DB에 이미 테이블이 있어도 Flyway가 관리하도록 허용
   data:
     redis:
-      host: localhost
-      port: 6379
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
 
 # --- 로깅 설정 ---
 logging:
@@ -32,12 +33,23 @@ logging:
     com.biner.strategy.engine: DEBUG # 전략 엔진 로그는 상세히 봅니다.
 
 # --- 바이낸스 API 및 거래 설정 ---
+# 운영 전환 시 아래 세 URL을 함께 바꿔야 합니다.
+#   api.url               : https://fapi.binance.com
+#   ws.market-stream-url  : wss://fstream.binance.com/ws
+#   ws.user-stream-url    : wss://fstream.binance.com/ws
 binance:
   api:
-    url: https://testnet.binancefuture.com # 또는 실제 운영 시: https://fapi.binance.com
+    url: ${BINANCE_API_URL:https://testnet.binancefuture.com}
     key: ${BINANCE_API_KEY:dummy_key_for_local_test}
     secret: ${BINANCE_API_SECRET:dummy_secret_for_local_test}
+    recv-window: 5000
+    # 손절/익절 조건부 주문 방식. ALGO: /fapi/v1/algoOrder (2025-12 이후 바이낸스 정책), LEGACY: /fapi/v1/order
+    conditional-order-mode: ALGO
+  ws:
+    market-stream-url: ${BINANCE_MARKET_WS_URL:wss://stream.binancefuture.com/ws}
+    user-stream-url: ${BINANCE_USER_WS_URL:wss://stream.binancefuture.com/ws}
   kline:
+    symbol: "BTCUSDT"
     interval: "1m" # 실시간 구독할 캔들 시간봉
 
 # --- 리스크 관리 설정 ---
@@ -45,9 +57,18 @@ trading:
   risk-management:
     stop-loss-percent: 0.02  # 손절 2%
     take-profit-percent: 0.04 # 익절 4%
+    close-on-protection-failure: true # 손절 주문 설정 실패 시 즉시 시장가 청산
   general:
-    max-bar-count: 200
+    max-bar-count: 500 # 200 이평선 + 지표 안정화를 위해 200보다 넉넉하게
     leverage: 1 # 원하는 레버리지 배율로 수정 (예: 5배)
+    price-tick-size: "0.1"     # BTCUSDT 선물 가격 단위
+    quantity-step-size: "0.001" # BTCUSDT 선물 수량 단위
+    pending-order-timeout-seconds: 60
+  strategy:
+    rsi-overbought-exit-enabled: false
+    bollinger-upper-exit-enabled: true
+    strategic-stop-loss-enabled: false
+    dca-enabled: false
   ichimoku:
     tenkan-sen-period: 9
     kijun-sen-period: 26
@@ -85,7 +106,27 @@ resilience4j:
         limitRefreshPeriod: 1s
         timeoutDuration: 500ms
   retry:
-    instances:
-      binanceApi:
+    configs:
+      default:
         maxRetryAttempts: 3
         waitDuration: 1s
+        # 네트워크 오류와 5xx만 재시도합니다. 4xx(잘못된 요청, 잔고 부족 등)는 재시도해도 결과가 같습니다.
+        retryExceptions:
+          - org.springframework.web.reactive.function.client.WebClientRequestException
+          - org.springframework.web.reactive.function.client.WebClientResponseException$InternalServerError
+          - org.springframework.web.reactive.function.client.WebClientResponseException$BadGateway
+          - org.springframework.web.reactive.function.client.WebClientResponseException$ServiceUnavailable
+          - org.springframework.web.reactive.function.client.WebClientResponseException$GatewayTimeout
+    instances:
+      binanceApi:
+        baseConfig: default
+      # 주문은 newClientOrderId로 멱등성이 보장되므로 같은 조건으로 재시도합니다.
+      binanceOrderApi:
+        baseConfig: default
+
+# --- 알림 설정 (값이 없으면 로그로만 출력) ---
+telegram:
+  bot:
+    token: ${TELEGRAM_BOT_TOKEN:dummy}
+  chat:
+    id: ${TELEGRAM_CHAT_ID:dummy}

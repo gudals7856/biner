@@ -13,12 +13,24 @@
 
 ## 2. 핵심 매매 전략
 
+> 아래 기능 중 일부는 `application.yml`의 `trading.strategy.*` 스위치로 켜고 끕니다. 현재 기본값은 다음과 같습니다.
+>
+> | 기능 | 설정 키 | 기본값 |
+> |---|---|---|
+> | 익절: 볼린저 상단 밖 → 복귀 | `bollinger-upper-exit-enabled` | `true` |
+> | 익절: RSI 과매수 이탈 | `rsi-overbought-exit-enabled` | `false` |
+> | 손절: MACD 데드크로스 / 기준선 이탈 | `strategic-stop-loss-enabled` | `false` |
+> | 물타기(DCA) | `dca-enabled` | `false` |
+>
+> 하드 손절(-2%) / 익절(+4%) 보호 주문은 항상 동작합니다.
+
 ### 2.1. 신규 포지션 진입 (Entry)
 
 신규 포지션 진입은 **'상승 추세 중 눌림목'**을 포착하는 것을 목표로 합니다.
 
 - **필수 조건: 상승 추세 확인**
-  - 일목균형표(Ichimoku Cloud)의 전환선(`Tenkan-sen`)이 기준선(`Kijun-sen`)보다 위에 있어, 단기 추세가 상승 국면임을 먼저 확인합니다.
+  - 일목균형표(Ichimoku Cloud)의 전환선(`Tenkan-sen`)이 기준선(`Kijun-sen`) 이상이고,
+  - 종가가 200 이동평균선 위에 있어야 합니다. (장기 추세 필터)
 
 - **선택 조건: 점수제 (3개 중 2개 이상 충족)**
   - 위 필수 조건이 만족된 상태에서, 아래 3가지 '눌림목' 또는 '반등 임박' 신호 중 **2개 이상**이 동시에 발생하면 신규 롱(LONG) 포지션에 진입합니다.
@@ -42,8 +54,8 @@
 #### 2.3.1. 전략적 익절 (Strategic Take-Profit)
 
 - **조건:** 포지션이 **수익 상태**일 때, 아래 조건 중 하나라도 충족되면 시스템이 능동적으로 익절 신호를 보냅니다.
-  1. **RSI 과매수:** 가격이 단기적으로 과열되었다고 판단될 때 (기본값: 70 이상)
-  2. **볼린저 밴드 상단 터치:** 가격이 통계적 상단 저항선에 닿았을 때
+  1. **RSI 과매수 이탈:** RSI가 70 이상이었다가 70 아래로 내려올 때
+  2. **볼린저 밴드 상단 복귀:** 직전 종가가 상단 밖에 있다가 현재 종가가 상단 안으로 들어올 때
 
 #### 2.3.2. 전략적 손절 (Strategic Stop-Loss)
 
@@ -51,13 +63,17 @@
   1. **MACD 데드크로스:** 단기 추세가 하락으로 전환되는 신호
   2. **기준선 하향 이탈:** 가격이 일목균형표의 주요 지지선인 기준선(`Kijun-sen`) 아래로 마감될 때
 
-#### 2.3.3. 하드 스탑 & 익절 (Hard Stop-Loss & Take-Profit - OCO)
+#### 2.3.3. 하드 스탑 & 익절 (보호 주문)
 
 - **역할:** 시스템의 상태나 전략적 판단과 관계없이, 계좌를 보호하는 **최후의 기계적 안전장치**입니다.
-- **동작:** 포지션 진입 또는 물타기가 성공적으로 체결되면, `OrderExecutionService`는 즉시 바이낸스 거래소에 OCO(One-Cancels-the-Other) 주문을 설정합니다.
-  - **Stop-Loss:** 평균 단가 대비 `-X%` (설정값: `risk-management.stop-loss-percent`) 가격에 `STOP_MARKET` 주문
-  - **Take-Profit:** 평균 단가 대비 `+Y%` (설정값: `risk-management.take-profit-percent`) 가격에 `TAKE_PROFIT_MARKET` 주문
-- 이 주문들은 거래소 서버에 직접 등록되므로, 우리 시스템이 멈추거나 인터넷이 끊겨도 가격이 도달하면 무조건 체결됩니다.
+- **동작:** 진입/물타기 체결이 DB에 커밋된 직후, `OrderExecutionService`가 거래소에 두 개의 조건부 주문을 등록합니다.
+  - **Stop-Loss:** 평균 단가 대비 `-X%` (`risk-management.stop-loss-percent`) 에 `STOP_MARKET`
+  - **Take-Profit:** 평균 단가 대비 `+Y%` (`risk-management.take-profit-percent`) 에 `TAKE_PROFIT_MARKET`
+  - 두 주문 모두 `closePosition=true`, `workingType=MARK_PRICE` 입니다. 포지션이 0이면 반대 포지션을 열지 않습니다.
+  - 바이낸스 정책(2025-12~)에 따라 기본적으로 Algo Order API(`/fapi/v1/algoOrder`)로 전송합니다. (`binance.api.conditional-order-mode`)
+- 바이낸스에는 선물 OCO가 없으므로, 한쪽이 체결되어 포지션이 청산되면 `PositionService`가 남은 주문을 즉시 일괄 취소합니다.
+- **손절 주문 설정에 실패하면** 보호되지 않은 포지션을 남기지 않도록 즉시 시장가 청산합니다. (`risk-management.close-on-protection-failure`)
+- 이 주문들은 거래소 서버에 등록되므로, 우리 시스템이 멈추거나 인터넷이 끊겨도 가격이 도달하면 체결됩니다.
 
 #### 2.3.4. 비상 탈출 (Emergency Exit - 본전 탈출)
 
@@ -72,7 +88,7 @@
 - **`StrategyEngine` (두뇌):** 캔들 데이터를 분석하여 매매 신호(`TradeSignal`)를 발행합니다.
 - **`PositionService` (매니저):** `TradeSignal`을 받아 주문 수량을 계산하고, 실제 주문을 위한 `PlaceOrderEvent`를 발행합니다. 또한, 체결 완료 후 DB 상태를 최종적으로 업데이트하는 책임을 가집니다.
 - **`OrderExecutionService` (손과 발):** `PlaceOrderEvent`를 받아 실제 바이낸스 API를 호출하여 주문을 전송하고, OCO 주문을 설정하는 역할만 수행합니다.
-- **`BinanceUserDataStreamListener` (귀):** 바이낸스 웹소켓에 연결하여 내 계정에서 발생하는 모든 주문 체결(내가 낸 주문, OCO 주문 등)을 실시간으로 감지하고, 이를 유일한 '진실의 원천'인 `OrderFilledEvent`로 발행합니다.
+- **`BinanceUserDataStreamListener` (귀):** 바이낸스 웹소켓에 연결하여 내 계정에서 발생하는 모든 주문 체결(내가 낸 주문, 보호 주문 등)을 실시간으로 감지하고, 이를 유일한 '진실의 원천'인 `OrderFilledEvent`로 발행합니다.
 
 ``` mermaid
 graph TD
@@ -141,3 +157,61 @@ subgraph "기존 포지션 관리"
     D8 -- NO --> Y;
 end
 ```
+
+### 3.1. 안전장치
+
+| 위험 | 대응 |
+|---|---|
+| 체결 전 같은 신호가 다시 발생 → 중복 진입 | 주문 후 체결/실패 이벤트가 올 때까지 해당 심볼은 '주문 대기' 상태로 신호 무시 (`pending-order-timeout-seconds` 초과 시 알림 후 해제) |
+| 네트워크 재시도로 같은 주문이 두 번 전송 | 모든 주문에 `newClientOrderId` 부여. 재시도는 네트워크 오류/5xx에만 수행, 중복 ID 응답(-4116)은 성공으로 처리 |
+| 주문 실패가 조용히 묻힘 | fallback 없이 예외 전파 → `OrderFailedEvent` 발행 + 텔레그램 알림 |
+| 청산 주문이 반대 포지션을 엶 | 전략적 청산은 `reduceOnly=true`, 보호 주문은 `closePosition=true` |
+| 포지션이 없는데 늦게 도착한 청산 체결 / 수동 주문 | 우리 진입 주문(`bnE-` 접두사)이 아니면 새 포지션으로 기록하지 않고 알림 |
+| 사용자 데이터 스트림 끊김 / Listen Key 만료 | 연결 종료까지 블로킹, 30분마다 keepalive, 끊기면 지수 백오프 재연결, orderId 기준 중복 체결 제거 |
+| 시세 스트림 끊김 / 멈춤 | 15초마다 감시, 60초간 수신 없으면 누락 캔들을 REST로 보충 후 재연결 |
+| 재시작 직후 지표 계산 불가 | 시작 시 과거 캔들을 REST로 불러와 지표 워밍업 (신호는 발생시키지 않음) |
+
+## 4. 실행 방법
+
+### 4.1. 환경 변수
+
+`.env.example`을 `.env`로 복사한 뒤 값을 채웁니다. 비밀번호와 API 키는 코드나 설정 파일에 두지 않습니다.
+
+```bash
+cp .env.example .env
+```
+
+```bash
+docker compose up -d
+```
+
+애플리케이션은 `.env`를 자동으로 읽지 않으므로, 셸에서 export 하거나 IDE 실행 설정에 등록합니다.
+
+```bash
+set -a && source .env && set +a
+```
+
+### 4.2. 백테스트
+
+```bash
+./gradlew bootRun --args='--spring.profiles.active=dataloader --dataloader.file=BTCUSDT_5m_since_2025-01-01.xlsx --dataloader.timeframe=5m'
+```
+
+```bash
+./gradlew bootRun --args='--spring.profiles.active=backtest --backtest.timeframe=5m'
+```
+
+- `backtest.timeframe`은 적재한 데이터의 `dataloader.timeframe`과 같아야 합니다.
+- 리포트의 MDD는 평가 자산(미실현 손익 포함) 기준이며, 승률은 수수료를 뺀 순손익 기준입니다.
+
+### 4.3. 테스트
+
+```bash
+./gradlew test
+```
+
+### 4.4. 운영 전환 체크리스트
+
+1. 테스트넷에서 진입 → 보호 주문 등록 → 손절/익절 체결 → 남은 주문 취소까지 한 사이클을 확인합니다.
+2. `BINANCE_API_URL`, `BINANCE_MARKET_WS_URL`, `BINANCE_USER_WS_URL`을 운영 주소로 함께 바꿉니다.
+3. `trading.general.price-tick-size` / `quantity-step-size`가 거래 심볼의 거래소 규칙과 맞는지 확인합니다.

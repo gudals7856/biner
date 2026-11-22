@@ -1,106 +1,223 @@
 package com.biner.order.service;
 
+import com.biner.notification.service.NotificationService;
 import com.biner.order.client.BinanceFuturesClient;
+import com.biner.order.client.BinanceFuturesClient.UserDataStreamConnection;
 import com.biner.order.domain.Position;
 import com.biner.order.event.OrderFilledEvent;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
-import lombok.RequiredArgsConstructor;
+import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 바이낸스 사용자 데이터 웹소켓 스트림을 구독하고,
- * 실시간 주문 체결 정보를 시스템 내부 이벤트로 발행하는 서비스입니다.
- * 이 클래스는 시스템의 '귀' 역할을 수행합니다.
+ * 실시간 주문 체결 정보를 시스템 내부 이벤트(OrderFilledEvent)로 발행하는 서비스입니다. ('귀' 역할)
+ *
+ * <ul>
+ *   <li>연결이 끊길 때까지 블로킹하고, 끊기면 지수 백오프로 재연결합니다. (동시에 연결은 항상 1개)</li>
+ *   <li>Listen Key는 30분마다 연장(keepalive)합니다. (유효기간 60분)</li>
+ *   <li>재연결 등으로 같은 체결 메시지가 다시 와도 orderId 기준으로 한 번만 처리합니다.</li>
+ * </ul>
  */
 @Slf4j
 @Service
-@Profile("!backtest & !dataloader") // 'backtest' 또는 'dataloader' 프로필이 아닐 때만 활성화
-@RequiredArgsConstructor
+@Profile("!backtest & !dataloader")
 public class BinanceUserDataStreamListener {
 
-    private final BinanceFuturesClient binanceClient;
-    private final ApplicationEventPublisher eventPublisher;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+  private static final long INITIAL_RECONNECT_DELAY_MS = 1_000;
+  private static final long MAX_RECONNECT_DELAY_MS = 60_000;
+  private static final long KEEPALIVE_INTERVAL_MINUTES = 30;
+  private static final int PROCESSED_ORDER_CACHE_SIZE = 1_000;
 
-    private static final long INITIAL_RECONNECT_DELAY_MS = 1000; // 1초
-    private static final long MAX_RECONNECT_DELAY_MS = 60000; // 60초
+  private final BinanceFuturesClient binanceClient;
+  private final ApplicationEventPublisher eventPublisher;
+  private final NotificationService notificationService;
+  private final ObjectMapper objectMapper = new ObjectMapper();
 
-    /**
-     * 애플리케이션이 시작된 후 자동으로 웹소켓 리스닝을 시작합니다.
-     */
-    @PostConstruct
-    public void startListening() {
-        new Thread(() -> {
-            long reconnectDelay = INITIAL_RECONNECT_DELAY_MS;
-            while (!Thread.currentThread().isInterrupted()) {
-                try {
-                    log.info("바이낸스 사용자 데이터 스트림 리스너를 시작합니다...");
-                    // 1. 웹소켓 연결을 위한 Listen Key를 발급받습니다.
-                    String listenKey = binanceClient.getListenKey();
-                    log.info("Listen Key를 발급받았습니다: {}", listenKey);
+  /** 최근 처리한 orderId (중복 체결 이벤트 제거용, LRU) */
+  private final Set<Long> processedOrderIds = Collections.newSetFromMap(
+    Collections.synchronizedMap(new LinkedHashMap<>(16, 0.75f, false) {
+      @Override
+      protected boolean removeEldestEntry(Map.Entry<Long, Boolean> eldest) {
+        return size() > PROCESSED_ORDER_CACHE_SIZE;
+      }
+    })
+  );
 
-                    // 2. Listen Key를 사용하여 웹소켓에 연결하고, 메시지 핸들러를 등록합니다.
-                    // 이 메소드는 연결이 끊어질 때까지 블로킹됩니다.
-                    binanceClient.connectToUserDataStream(listenKey, this::handleWebSocketMessage);
-                    
-                    // 연결이 정상적으로 수립되었었으므로, 재연결 딜레이를 초기화합니다.
-                    reconnectDelay = INITIAL_RECONNECT_DELAY_MS;
+  private final ScheduledExecutorService keepAliveScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+    Thread t = new Thread(r, "listenkey-keepalive");
+    t.setDaemon(true);
+    return t;
+  });
 
-                } catch (Exception e) {
-                    log.error("바이낸스 사용자 데이터 스트림 연결 또는 처리 중 오류 발생. {}ms 후 재연결을 시도합니다.", reconnectDelay, e);
-                    try {
-                        Thread.sleep(reconnectDelay);
-                        // 지수 백오프: 재연결 딜레이를 두 배로 늘리되, 최대치를 넘지 않도록 합니다.
-                        reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY_MS);
-                    } catch (InterruptedException ie) {
-                        log.warn("재연결 대기 중 스레드가 중단되었습니다.");
-                        Thread.currentThread().interrupt();
-                    }
-                }
-            }
-        }).start();
+  private volatile boolean running = true;
+  private volatile UserDataStreamConnection currentConnection;
+  private Thread listenerThread;
+
+  public BinanceUserDataStreamListener(BinanceFuturesClient binanceClient,
+                                       ApplicationEventPublisher eventPublisher,
+                                       NotificationService notificationService) {
+    this.binanceClient = binanceClient;
+    this.eventPublisher = eventPublisher;
+    this.notificationService = notificationService;
+  }
+
+  @PostConstruct
+  public void startListening() {
+    listenerThread = new Thread(this::listenLoop, "user-data-stream");
+    listenerThread.setDaemon(true);
+    listenerThread.start();
+  }
+
+  @PreDestroy
+  public void stop() {
+    running = false;
+    keepAliveScheduler.shutdownNow();
+    UserDataStreamConnection connection = currentConnection;
+    if (connection != null) {
+      connection.close();
     }
+    if (listenerThread != null) {
+      listenerThread.interrupt();
+    }
+  }
 
-    /**
-     * 웹소켓으로부터 메시지를 수신할 때마다 호출되는 콜백 메소드입니다.
-     * @param message 바이낸스로부터 수신된 JSON 형식의 원시 메시지
-     */
-    private void handleWebSocketMessage(String message) {
-        try {
-            log.debug("웹소켓 메시지 수신: {}", message);
-            JsonNode rootNode = objectMapper.readTree(message);
+  private void listenLoop() {
+    long reconnectDelay = INITIAL_RECONNECT_DELAY_MS;
+    while (running && !Thread.currentThread().isInterrupted()) {
+      ScheduledFuture<?> keepAliveTask = null;
+      try {
+        log.info("바이낸스 사용자 데이터 스트림 리스너를 시작합니다...");
+        String listenKey = binanceClient.getListenKey();
 
-            // 이벤트 타입이 'ORDER_TRADE_UPDATE'인지 확인합니다.
-            if (rootNode.has("e") && "ORDER_TRADE_UPDATE".equals(rootNode.get("e").asText())) {
-                JsonNode orderNode = rootNode.get("o");
-                String orderStatus = orderNode.get("X").asText();
+        currentConnection = binanceClient.connectToUserDataStream(listenKey, this::handleWebSocketMessage);
+        reconnectDelay = INITIAL_RECONNECT_DELAY_MS;
 
-                // 주문 상태가 'FILLED'(완전 체결)일 때만 처리합니다.
-                if ("FILLED".equals(orderStatus)) {
-                    String symbol = orderNode.get("s").asText();
-                    String sideStr = orderNode.get("S").asText();
-                    BigDecimal filledQty = new BigDecimal(orderNode.get("z").asText());
-                    BigDecimal avgPrice = new BigDecimal(orderNode.get("ap").asText());
+        keepAliveTask = keepAliveScheduler.scheduleAtFixedRate(this::keepAlive,
+          KEEPALIVE_INTERVAL_MINUTES, KEEPALIVE_INTERVAL_MINUTES, TimeUnit.MINUTES);
 
-                    // 체결 수량이 0보다 클 때만 (실제 체결이 있을 때만) 이벤트를 발행합니다.
-                    if (filledQty.compareTo(BigDecimal.ZERO) > 0) {
-                        Position.PositionSide side = "BUY".equalsIgnoreCase(sideStr) ? Position.PositionSide.LONG : Position.PositionSide.SHORT;
-                        OrderFilledEvent filledEvent = new OrderFilledEvent(symbol, side, filledQty, avgPrice);
-
-                        log.info("웹소켓을 통해 주문 체결(FILLED) 이벤트를 감지했습니다. 시스템 이벤트를 발행합니다: {}", filledEvent);
-                        eventPublisher.publishEvent(filledEvent);
-                    }
-                }
-            }
-        } catch (Exception e) {
-            log.error("웹소켓 메시지 처리 중 오류 발생", e);
+        // 연결이 끊길 때까지 블로킹합니다.
+        currentConnection.closed().join();
+        log.warn("사용자 데이터 스트림 연결이 종료되었습니다. 재연결합니다.");
+      } catch (Exception e) {
+        log.error("사용자 데이터 스트림 오류. {}ms 후 재연결합니다.", reconnectDelay, e);
+        if (reconnectDelay >= MAX_RECONNECT_DELAY_MS) {
+          notificationService.sendErrorNotification("사용자 데이터 스트림 재연결이 반복 실패하고 있습니다. 체결 정보가 누락될 수 있습니다.", e);
         }
+      } finally {
+        if (keepAliveTask != null) {
+          keepAliveTask.cancel(false);
+        }
+        currentConnection = null;
+      }
+
+      if (!running) {
+        break;
+      }
+      try {
+        Thread.sleep(reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY_MS);
+      } catch (InterruptedException ie) {
+        Thread.currentThread().interrupt();
+      }
     }
+    log.info("사용자 데이터 스트림 리스너가 종료되었습니다.");
+  }
+
+  private void keepAlive() {
+    try {
+      binanceClient.keepAliveListenKey();
+    } catch (Exception e) {
+      // 연장에 실패하면 Listen Key가 만료될 수 있으므로 연결을 끊어 새 키로 재연결하게 합니다.
+      log.error("Listen Key 연장 실패. 재연결을 유도합니다.", e);
+      UserDataStreamConnection connection = currentConnection;
+      if (connection != null) {
+        connection.close();
+        connection.closed().complete(null);
+      }
+    }
+  }
+
+  /**
+   * 웹소켓으로부터 메시지를 수신할 때마다 호출되는 콜백 메소드입니다.
+   */
+  void handleWebSocketMessage(String message) {
+    try {
+      log.debug("웹소켓 메시지 수신: {}", message);
+      JsonNode root = objectMapper.readTree(message);
+      String eventType = root.path("e").asText();
+
+      if ("listenKeyExpired".equals(eventType)) {
+        log.warn("Listen Key가 만료되었습니다. 재연결합니다.");
+        UserDataStreamConnection connection = currentConnection;
+        if (connection != null) {
+          connection.close();
+          connection.closed().complete(null);
+        }
+        return;
+      }
+
+      if (!"ORDER_TRADE_UPDATE".equals(eventType)) {
+        return;
+      }
+
+      JsonNode o = root.get("o");
+      if (!"FILLED".equals(o.path("X").asText())) {
+        return;
+      }
+
+      long orderId = o.path("i").asLong();
+      if (!processedOrderIds.add(orderId)) {
+        log.info("이미 처리된 체결 이벤트입니다. 무시합니다. orderId={}", orderId);
+        return;
+      }
+
+      BigDecimal filledQty = new BigDecimal(o.path("z").asText("0"));
+      if (filledQty.signum() <= 0) {
+        return;
+      }
+
+      Position.PositionSide side = "BUY".equalsIgnoreCase(o.path("S").asText())
+        ? Position.PositionSide.LONG
+        : Position.PositionSide.SHORT;
+
+      OrderFilledEvent filledEvent = new OrderFilledEvent(
+        o.path("s").asText(),
+        side,
+        filledQty,
+        new BigDecimal(o.path("ap").asText("0")),
+        orderId,
+        o.path("c").asText(""),
+        o.path("ot").asText(o.path("o").asText("")),
+        o.path("R").asBoolean(false),
+        o.path("cp").asBoolean(false)
+      );
+
+      log.info("주문 체결(FILLED) 감지. 시스템 이벤트를 발행합니다: {}", filledEvent);
+      try {
+        eventPublisher.publishEvent(filledEvent);
+      } catch (Exception e) {
+        // 체결은 거래소에서 이미 일어났으므로, DB 반영 실패는 즉시 사람이 확인해야 합니다.
+        log.error("체결 이벤트 처리 실패. DB 포지션과 거래소 상태가 다를 수 있습니다: {}", filledEvent, e);
+        notificationService.sendErrorNotification("체결 반영 실패(수동 확인 필요): " + filledEvent, e);
+      }
+    } catch (Exception e) {
+      log.error("웹소켓 메시지 처리 중 오류 발생", e);
+    }
+  }
 }

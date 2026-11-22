@@ -1,6 +1,15 @@
-# Project exclude paths
+# Build
 /.gradle/
 /build/
-/build/classes/java/main/
-/build/classes/java/test/
-/.idea
+
+# IDE
+/.idea/
+*.iml
+
+# Secrets
+.env
+
+# Logs / JVM crash dumps
+/logs/
+hs_err_pid*.log
+replay_pid*.log

@@ -52,7 +52,7 @@ public class BacktestRunner implements CommandLineRunner {
         Instant end = Instant.parse(endTime);
 
         // 3. ReplayEngine을 사용하여 백테스트를 실행합니다.
-        replayEngine.runBacktest(symbol, timeframe, start, end);
+        replayEngine.runBacktest(symbol, timeframe, start, end, mockExecutionService::markToMarket);
 
         // 4. 모든 리플레이가 끝난 후, 최종 결과 리포트를 출력합니다.
         mockExecutionService.printReport();

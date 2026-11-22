@@ -3,9 +3,12 @@ package com.biner.notification.service;
 import com.biner.order.domain.Position;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.MediaType;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+
+import java.util.Map;
 
 /**
  * 텔레그램 봇을 통해 관리자에게 중요한 알림(거래 내역, 시스템 에러 등)을 보내는 서비스입니다.
@@ -67,17 +70,15 @@ public class NotificationService {
         }
 
         try {
-            // 텔레그램 sendMessage API URL 생성
-            String url = String.format("https://api.telegram.org/bot%s/sendMessage?chat_id=%s&text=%s", 
-                    botToken, chatId, text);
-            
-            // WebClient를 사용하여 비동기 GET 요청 전송
-            webClient.get()
-                    .uri(url)
+            // 토큰이 로그/URL 인코딩 문제에 노출되지 않도록 본문(JSON)으로 전송합니다.
+            webClient.post()
+                    .uri("https://api.telegram.org/bot{token}/sendMessage", botToken)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(Map.of("chat_id", chatId, "text", text))
                     .retrieve()
                     .bodyToMono(String.class)
-                    .block(); // 결과가 올 때까지 동기적으로 대기
-                    
+                    .block();
+
             log.info("텔레그램 알림 전송 성공.");
         } catch (Exception e) {
             log.error("텔레그램 알림 전송 실패", e);

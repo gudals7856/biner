@@ -123,4 +123,18 @@ public class Position {
             this.isMaxDcaReached = true;
         }
     }
+
+    /**
+     * 포지션 일부가 청산(부분 체결)되었을 때 남은 수량을 줄입니다.
+     *
+     * @param closedAmount 청산된 수량
+     */
+    public void reduceAmount(BigDecimal closedAmount) {
+        BigDecimal remaining = this.amount.subtract(closedAmount);
+        if (remaining.signum() <= 0) {
+            close();
+        } else {
+            this.amount = remaining;
+        }
+    }
 }

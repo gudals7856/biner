@@ -1,5 +1,6 @@
 package com.biner.backtest;
 
+import com.biner.common.util.Intervals;
 import com.biner.market.domain.Candle;
 import com.biner.market.domain.CandleId;
 import com.biner.market.repository.CandleRepository;
@@ -10,18 +11,19 @@ import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 import java.io.FileInputStream;
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -37,23 +39,29 @@ public class ExcelDataLoader implements CommandLineRunner {
 
     private final CandleRepository candleRepository;
 
-    // 처리할 엑셀 파일의 경로와 기본 정보
-    private static final String FILE_PATH = "BTCUSDT_5m_since_2025-01-01.xlsx";
-    private static final String SYMBOL = "BTCUSDT";
-    private static final String TIMEFRAME = "5m";
+    // 처리할 엑셀 파일의 경로와 기본 정보 (실행 인자 --dataloader.file=... 등으로 변경 가능)
+    @Value("${dataloader.file:BTCUSDT_5m_since_2025-01-01.xlsx}")
+    private String filePath;
+
+    @Value("${dataloader.symbol:BTCUSDT}")
+    private String symbol;
+
+    @Value("${dataloader.timeframe:5m}")
+    private String timeframe;
 
     @Override
     public void run(String... args) throws Exception {
         log.info("==================================================");
-        log.info("엑셀 데이터 로더를 시작합니다. 파일: {}", FILE_PATH);
+        log.info("엑셀 데이터 로더를 시작합니다. 파일: {}", filePath);
         log.info("==================================================");
 
+        Duration candleDuration = Intervals.toDuration(timeframe);
         List<Candle> candles = new ArrayList<>();
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
         ZoneId kstZone = ZoneId.of("Asia/Seoul");
         DataFormatter dataFormatter = new DataFormatter(); // DataFormatter 인스턴스 생성
 
-        try (FileInputStream file = new FileInputStream(FILE_PATH);
+        try (FileInputStream file = new FileInputStream(filePath);
              Workbook workbook = new XSSFWorkbook(file)) {
 
             Sheet sheet = workbook.getSheetAt(0);
@@ -81,10 +89,11 @@ public class ExcelDataLoader implements CommandLineRunner {
                     LocalDateTime ldtKst = LocalDateTime.parse(dateKstStr, formatter);
                     ZonedDateTime zdtKst = ldtKst.atZone(kstZone);
                     Instant openTime = zdtKst.toInstant();
-                    Instant closeTime = openTime.plus(5, ChronoUnit.MINUTES);
+                    // 바이낸스 규칙과 동일하게 closeTime = openTime + 간격 - 1ms
+                    Instant closeTime = openTime.plus(candleDuration).minusMillis(1);
 
                     // 3. 복합 키 객체 생성
-                    CandleId candleId = new CandleId(openTime, SYMBOL, TIMEFRAME);
+                    CandleId candleId = new CandleId(openTime, symbol, timeframe);
 
                     // 4. Candle 엔티티 생성
                     Candle candle = Candle.builder()
