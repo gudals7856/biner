@@ -13,3 +13,6 @@
 /logs/
 hs_err_pid*.log
 replay_pid*.log
+
+# IntelliJ build output
+/out/
